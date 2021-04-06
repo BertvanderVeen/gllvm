@@ -69,7 +69,6 @@ predict.gllvm <- function(object, newX = NULL, newTR = NULL, newLV = NULL, type 
     colnames(object$y) <- paste("y",1:p, sep = "")
   }
     
-    
   if(!is.null(object$X) && is.null(object$TR)) {
     B <- object$params$Xcoef
     X.d <- Xnew <- object$X
@@ -82,8 +81,8 @@ predict.gllvm <- function(object, newX = NULL, newTR = NULL, newLV = NULL, type 
           formula1 <- paste(formula1, n1[i1], sep = "+")
         }}
       formula1 <- formula(formula1)
-      Xnew <- as.matrix(model.matrix(formula1, data = data.frame(newdata)))
-      xb <- as.matrix(model.matrix(formula, data = data.frame(Xnew)))
+      Xnew <- as.matrix(model.matrix(formula1, data = as.data.frame(newdata)))
+      xb <- as.matrix(model.matrix(formula, data = as.data.frame(newdata)))
       X.d <- as.matrix(xb[, !(colnames(xb) %in% c("(Intercept)"))])
       colnames(X.d) <- colnames(xb)[!(colnames(xb) %in% c("(Intercept)"))]
       }
@@ -160,8 +159,7 @@ predict.gllvm <- function(object, newX = NULL, newTR = NULL, newLV = NULL, type 
       }
       lvs <- newLV
       eta <- eta + lvs %*% t(theta)
-      if(object$quadratic != FALSE)
-        eta <- eta + lvs^2 %*% t(object$params$theta[,-c(1:object$num.lv),drop=F])
+      if(object$quadratic != FALSE)eta <- eta + lvs^2 %*% t(object$params$theta[,-c(1:object$num.lv),drop=F])
      
     }
   }

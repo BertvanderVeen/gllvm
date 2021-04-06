@@ -183,8 +183,8 @@ Type objective_function<Type>::operator() ()
         }
       }
       for(int i=0; i<n; i++){
-        if(nlvr == num_lv) nll.row(i).array() -= (((vector <Type> (A.col(i).matrix().diagonal())).log()).sum() + 0.5*(- ((A.col(i).matrix()*A.col(i).matrix().transpose()).matrix()).diagonal().sum()-(u.row(i)*u.row(i).transpose()).sum()))/p;
-        if(nlvr>num_lv) nll.row(i).array() -= (((vector <Type> (A.col(i).matrix().diagonal())).log()).sum() + 0.5*(- (Cu.inverse()*(A.col(i).matrix()*A.col(i).matrix().transpose()).matrix()).diagonal().sum()-((u.row(i)*Cu.inverse())*u.row(i).transpose()).sum()))/p;
+        if(nlvr == num_lv) nll.row(i).array() -= (((vector <Type> (A.col(i).matrix().diagonal())).log()).sum() - 0.5*(((A.col(i).matrix()*A.col(i).matrix().transpose()).matrix()).diagonal().sum()+(u.row(i)*u.row(i).transpose()).sum()))/p;
+        if(nlvr>num_lv) nll.row(i).array() -= (((vector <Type> (A.col(i).matrix().diagonal())).log()).sum() - 0.5*(Cu.inverse()*(A.col(i).matrix()*A.col(i).matrix().transpose()).matrix()).diagonal().sum()-0.5*((u.row(i)*Cu.inverse())*u.row(i).transpose()).sum())/p;
         // log(det(A_i))-sum(trace(Cu^(-1)*A_i))*0.5 sum.diag(A)
       }
       nll.array() -= -0.5*atomic::logdet(Cu)*random(0)/p;
@@ -224,7 +224,7 @@ Type objective_function<Type>::operator() ()
         for (int i=0; i<n; i++) {
           cQ(i,j) += 0.5*((xb.row(i))*((Ab.col(j).matrix()*Ab.col(j).matrix().transpose()).matrix()*xb.row(i).transpose())).sum();
         }
-        nll.col(j).array() -= ((((vector <Type> (Ab.col(j).matrix().diagonal())).log()).sum() + 0.5*(-(S.inverse()*(Ab.col(j).matrix()*Ab.col(j).matrix().transpose()).matrix()).trace()-(Br.col(j).transpose()*(S.inverse()*Br.col(j))).sum())))/n;// log(det(A_bj))-sum(trace(S^(-1)A_bj))*0.5 + a_bj*(S^(-1))*a_bj
+        nll.col(j).array() -= ((((vector <Type> (Ab.col(j).matrix().diagonal())).log()).sum() - 0.5*(S.inverse()*(Ab.col(j).matrix()*Ab.col(j).matrix().transpose()).matrix()).trace()-0.5*(Br.col(j).transpose()*(S.inverse()*Br.col(j))).sum()))/n;// log(det(A_bj))-sum(trace(S^(-1)A_bj))*0.5 + a_bj*(S^(-1))*a_bj
       }
       eta += xb*Br;
       nll.array() -= -0.5*atomic::logdet(S)/n;//n*
@@ -236,15 +236,13 @@ Type objective_function<Type>::operator() ()
       //   b(0,j) = fabs(b(0,j));
       // }
       for(int k = 0; k<x.cols();k++){
-        if(k==0 && constraint(0)==1){
+        if(constraint(k)==2){
           for (int j=0; j<p;j++){
-          b(k,j) = fabs(b(k,j)); 
+            b(k,j) = fabs(b(k,j)); 
           }
-        }else{
-          if(constraint(k)==1){
-            for (int j=0; j<p;j++){
-              b(k,j) = -fabs(b(k,j)); 
-            }
+        }else if(constraint(k)==1){
+          for (int j=0; j<p;j++){
+            b(k,j) = -fabs(b(k,j)); 
           }
         }
       }
@@ -509,14 +507,14 @@ Type objective_function<Type>::operator() ()
       for(int k = 0; k<x.cols();k++){
         if(k==0 && constraint(0)==1){
           for (int j=0; j<p;j++){
-          b(k,j) = fabs(b(k,j)); 
+            b(k,j) = fabs(b(k,j)); 
           }
         }else{
-        if(constraint(k)==1){
-          for (int j=0; j<p;j++){
-            b(k,j) = -fabs(b(k,j)); 
+          if(constraint(k)==1){
+            for (int j=0; j<p;j++){
+              b(k,j) = -fabs(b(k,j)); 
+            }
           }
-        }
         }
       }
       eta += x*b;

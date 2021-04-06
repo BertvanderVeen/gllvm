@@ -523,21 +523,25 @@ if(!is.null(X)){
         }
       }
       betaM <- matrix(param[bi],p,num.X+1,byrow=TRUE)
-      beta0 <- (betaM[,1])
-      if (!is.null(X)){ betas <- betaM[, -1,drop=F]
+      betas <- betaM
+      if (!is.null(X)){ 
       for(k in 1:ncol(betas)){
-        if(constraint[k+1]==1){
+        if(constraint[k]==1){
           betas[,k]<- -abs(betas[,k]) 
+        }else if(constraint[k]==2){
+          betas[,k]<- abs(betas[,k]) 
         }
       }
+
       }
+      beta0 <- betas[,1]
+      betas <- betas[, -1,drop=F]
       
       new.loglik <- objr$env$value.best[1]
 
     }
-    
-    
-## Laplace method / nlvr==0
+
+    ## Laplace method / nlvr==0
     if(method=="LA" || (nlvr==0 && method=="VA" && row.eff!="random")){
       if(!is.null(X)){Xd=cbind(1,X)} else {Xd=matrix(1,n)}
       extra=0
@@ -620,14 +624,18 @@ if(!is.null(X)){
         }
       }
       betaM <- matrix(param[bi],p,num.X+1,byrow=TRUE)
-      beta0 <- (betaM[,1])
-      if (!is.null(X)){ betas <- betaM[, -1,drop=F]
-      for(k in 1:ncol(betas)){
-        if(constraint[k+1]==1){
-          betas[,k]<- -abs(betas[,k]) 
+      betas <- betaM
+      if (!is.null(X)){ 
+        for(k in 1:ncol(betas)){
+          if(constraint[k]==1){
+            betas[,k]<- -abs(betas[,k]) 
+          }else if(constraint[k]==2){
+            betas[,k]<- abs(betas[,k]) 
+          }
         }
       }
-    }
+      beta0 <- betas[,1]
+      betas <- betas[, -1,drop=F]
       new.loglik <- objr$env$value.best[1]
       
       if(family %in% c("negative.binomial", "tweedie", "ZIP", "gaussian", "gamma")) {
@@ -639,7 +647,7 @@ if(!is.null(X)){
       }
     }
 
-
+  
     if(((n.i==1 || out$logL > (new.loglik))  && is.finite(new.loglik)) && !inherits(optr, "try-error")){
       out$start <- fit
       objrFinal<-objr1 <- objr; optrFinal<-optr1<-optr;
