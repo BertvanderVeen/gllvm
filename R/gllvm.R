@@ -728,7 +728,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, lv
     }
     
     #check for redundant predictors
-    
+    terms.lv <- NULL
     if(!is.null(lv.X)){
       if((num.RR+num.lv.c)>ncol(lv.X)){
         stop("Cannot have more reduced dimensions than the number of predictor variables. Please reduce num.RR or num.lv.c \n")
@@ -754,7 +754,6 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, lv
         }
         lv.X.red <- colnames(lv.X)[QR$pivot[-c(1:QR$rank)]]
         lv.X<-lv.X[,QR$pivot[1:QR$rank],drop=F]
-        
         #remove redundant terms from formulas
         if(!is.null(lv.formula)){
           lv.formula <- formula(paste("~",paste(attr(terms(lv.formula),"term.labels")[!attr(terms(lv.formula),"term.labels")%in%lv.X.red],collapse="+")))
@@ -762,6 +761,9 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, lv
         
         #modify terms object
       }
+      terms.lv <- terms(lv.formula)
+      attr(terms.lv,"intercept") <- 0
+      
     }
     
     p <- NCOL(y)
@@ -916,7 +918,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, lv
     out <- list( y = y, X = X, lv.X = lv.X, TR = TR, data = datayx, num.lv = num.lv, num.lv.c = num.lv.c, num.RR = num.RR, lv.formula = lv.formula, formula = formula,
         method = method, family = family, row.eff = row.eff, rstruc =rstruc, cstruc = cstruc, dist=dist, randomX = randomX, n.init = n.init,
         sd = FALSE, Lambda.struc = Lambda.struc, TMB = TMB, beta0com = beta0com, optim.method=optim.method, disp.group = disp.group)
-    if(return.terms) {out$terms = term} #else {terms <- }
+    if(return.terms) {out$terms = term;out$terms.lv = terms.lv} #else {terms <- }
 
     if("la.link.bin" %in% names(pp.pars)){link = pp.pars$la.link.bin}
     if (family == "binomial") {
