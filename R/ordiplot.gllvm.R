@@ -476,6 +476,16 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
         covB <- covB[row.names(covB)=="b_lv",colnames(covB)=="b_lv"]
         rotSD <- matrix(0,ncol=num.RR+num.lv.c,nrow=ncol(object$lv.X)) 
         #using svd_rotmat_sites instead of B so that uncertainty of the predictors is not affected by the scaling using alpha and sigma.lv
+        #add zeros to covB in the corerct places
+        idx<-which(c(upper.tri(object$params$LvXcoef,diag=F)))
+
+        
+        #add zeros where necessary
+        for(q in 1:length(idx)){
+          covB <- rbind(covB[1:(idx[q]-1),],0,covB[idx[q]:ncol(covB),])
+          covB <- cbind(covB[,1:(idx[q]-1)],0,covB[,idx[q]:ncol(covB)])
+        }
+        
         for(i in 1:ncol(object$lv.X)){
           rotSD[i,] <- sqrt(abs(diag(t(svd_rotmat_sites[1:(num.lv.c+num.RR),1:(num.lv.c+num.RR)])%*%covB[seq(i,(num.RR+num.lv.c)*ncol(object$lv.X),by=ncol(object$lv.X)),seq(i,(num.RR+num.lv.c)*ncol(object$lv.X),by=ncol(object$lv.X))]%*%svd_rotmat_sites[1:(num.lv.c+num.RR),1:(num.lv.c+num.RR)])))
         }
@@ -507,7 +517,7 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
       xi = with(units, pin[1L]/diff(usr[1:2]))
       yi = with(units, pin[2L]/diff(usr[3:4]))
       # idx <- sqrt((xi * diff(c(origin[1],ends[,1]+origin[1])))**2 + (yi * diff(c(origin[2],ends[,2]+origin[2])))**2) >.001
-      idx <-  apply(ends,1,function(x)if(all(abs(x)<0.001)){FALSE}else{TRUE})
+      idx <-  apply(ends,1,function(x)if(all(abs(x)<0.01)){FALSE}else{TRUE})
       if(any(!idx)){
         for(i in which(!idx)){
           cat("The effect for", paste(row.names(LVcoef)[i],collapse=",", sep = " "), "was too small to draw an arrow. \n")  

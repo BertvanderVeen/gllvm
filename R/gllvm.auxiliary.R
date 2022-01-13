@@ -487,6 +487,14 @@ start.values.gllvm.TMB <- function(y, X = NULL, lv.X = NULL, TR=NULL, family,
     if(num.lv.c>0){
       b.lv[,1:num.lv.c]<-t(t(b.lv[,1:num.lv.c])*abs(sigma.lv[1:num.lv.c]))
     }
+    if(starting.val!="zero"&randomB==FALSE){
+    #compute a LU decomposition for upper triangular B, gamma
+    thetab <- out$params[,c(1+1:(num.RR+num.lv.c))]%*%t(b.lv)
+    ludecomp <- Matrix::lu(thetab)
+    ludecomp <- Matrix::expand(ludecomp)
+    out$params[,c(1+1:(num.RR+num.lv.c))] <- as.matrix(ludecomp$L[,1:(num.RR+num.lv.c),drop=F])
+    b.lv <- t(as.matrix(ludecomp$U))[,1:(num.RR+num.lv.c)]
+    }
     out$b.lv <- b.lv
     if(randomB!=FALSE){
       if(starting.val!="zero"&randomB=="LV"){
@@ -2102,7 +2110,7 @@ sdrandom<-function(obj, Vtheta, incl, ignore.u = FALSE,return.covb = FALSE, type
     if((num.lv.c+num.lv+radidx)==0)A<-Q
     if((num.lv.c+num.RR)>0){
       for(q in 1:(num.lv.c+num.RR)){
-        Q[(1:n)+n*(q-1)+radidx,which(names(obj$par[incl])=="b_lv")[(1:ncol(lv.X))+(ncol(lv.X)*(q-1))]] <- lv.X#/sigma.lv[q]
+        Q[(1:n)+n*(q-1)+radidx,which(names(obj$par[incl])=="b_lv")[(1:(ncol(lv.X)-(q-1)))+(q-1)*ncol(lv.X)-(q-1)*(q-2)/2]] <- lv.X[,1:ncol(lv.X)-(q-1),drop=F]#/fit$params$sigma.lv[q] #divide here to multiply later in ordiplot
       }
     }
   } else {
@@ -2150,13 +2158,15 @@ sdrandom<-function(obj, Vtheta, incl, ignore.u = FALSE,return.covb = FALSE, type
     if((num.lv.c+num.lv+radidx)==0)A<-Q
     if((num.lv.c+num.RR)>0&random[3]==0){
       for(q in 1:(num.lv.c+num.RR)){
-        Q[(1:n)+n*(q-1)+radidx,which(names(obj$par[incl])=="b_lv")[(1:ncol(lv.X))+(ncol(lv.X)*(q-1))]] <- lv.X#/sigma.lv[q]
-      }
+          Q[(1:n)+n*(q-1)+radidx,which(names(obj$par[incl])=="b_lv")[(1:(ncol(lv.X)-(q-1)))+(q-1)*ncol(lv.X)-(q-1)*(q-2)/2]] <- lv.X[,1:ncol(lv.X)-(q-1),drop=F]#/fit$params$sigma.lv[q] #divide here to multiply later in ordiplot
+        }
     }
-    if(is.null(type)&(num.lv.c+num.RR)==0){
+    if(is.null(type)&(num.lv.c+num.RR)==0 | random[3] >1){
       type <- "residual"
-    }else{
+    }else if(num.lv.c>0){
       type <- "conditional"
+    }else if(num.RR>0 & random[3]== 0 & (num.lv+num.lv.c+radidx)==0){
+      type <- "marginal"
     }
     if(random[3]>0)type<-"residual"
     if((num.lv+num.lv.c)>0|any(random>0)){
@@ -2168,6 +2178,9 @@ sdrandom<-function(obj, Vtheta, incl, ignore.u = FALSE,return.covb = FALSE, type
     }else if(type=="residual"){
       diag.term2 <- (A)%*%Vtheta%*%t(A)
       colnames(diag.term2)<-row.names(diag.term2)<-row.names(A)
+    }else if(type=="marginal"){
+      covb <- Q%*%(A)%*%t(Q)
+      
     }
     
     }
@@ -2421,10 +2434,9 @@ CMSEPf <- function(fit, return.covb = F, type = NULL){
   }
   
   Q <- matrix(0,nrow=(num.lv+num.lv.c+num.RR)*n+radidx,ncol=dim(A)[1])
-  
   if((num.lv.c+num.RR)>0&randomB==FALSE){
     for(q in 1:(num.lv.c+num.RR)){
-      Q[(1:n)+n*(q-1)+radidx,which(names(fit$TMBfn$par[fit$Hess$incl])=="b_lv")[(1:ncol(fit$lv.X))+(ncol(fit$lv.X)*(q-1))]] <- fit$lv.X#/fit$params$sigma.lv[q] #divide here to multiply later in ordiplot
+      Q[(1:n)+n*(q-1)+radidx,which(names(fit$TMBfn$par[fit$Hess$incl])=="b_lv")[(1:(ncol(fit$lv.X)-(q-1)))+(q-1)*ncol(fit$lv.X)-(q-1)*(q-2)/2]] <- fit$lv.X[,1:ncol(fit$lv.X)-(q-1),drop=F]#/fit$params$sigma.lv[q] #divide here to multiply later in ordiplot
     }
   }
   if(is.null(type)){

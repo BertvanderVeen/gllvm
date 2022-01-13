@@ -341,6 +341,12 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
     
     map.list <- list()    
     map.list$B <- map.list$Br <- map.list$sigmaB <- map.list$sigmaij <- map.list$Abb <- factor(NA)
+    if(randomB==FALSE&(num.RR+num.lv.c)>0){
+      b.lv.map <- (1:prod(dim(b.lv)))
+      b.lv.map[!lower.tri(b.lv,diag=T)]<-NA
+      map.list$b_lv <- factor(b.lv.map)
+    }
+    
     xb<-Br<-matrix(0); sigmaB=diag(1);sigmaij=0; lg_Ar=0; Abb=0; Ab_lv = 0;
 #    if(row.eff==FALSE) map.list$r0 <- factor(rep(NA,n))
     if(family %in% c("poisson","binomial","ordinal","exponential")){
@@ -609,8 +615,18 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
         }else{
             sigmab_lv1<-0
             Ab_lv1 <- 0
-            }
-        if((num.lv.c+num.RR)>0){b.lv1 <- matrix(param1[nam=="b_lv"],ncol(lv.X),(num.lv.c+num.RR))}else{b.lv1<-matrix(0)}
+        }
+        
+        if((num.lv.c+num.RR)>0){
+          if(randomB==FALSE){
+            b.lv1 <- matrix(0,ncol=num.RR+num.lv.c,nrow=ncol(lv.X))
+            b.lv1[lower.tri(b.lv1,diag=T)] <- param1[nam=="b_lv"]
+          }else{
+            b.lv1 <- matrix(param1[nam=="b_lv"],ncol(lv.X),(num.lv.c+num.RR))
+          }
+        }else{
+          b.lv1<-matrix(0)
+          }
         lambda1 <- param1[nam=="lambda"]
         if (quadratic=="LV" | quadratic == T && start.struc == "LV"){
           lambda2 <- matrix(param1[nam == "lambda2"], byrow = T, ncol = num.lv+(num.lv.c+num.RR), nrow = 1)#In this scenario we have estimated two quadratic coefficients before
@@ -760,8 +776,16 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
       betaM <- matrix(param[bi],p,num.X+1,byrow=TRUE)
       beta0 <- betaM[,1]
       if(!is.null(X)) betas <- betaM[,-1]
-      if((num.lv.c+num.RR)>0)b.lv <- matrix(param[bi.lv],ncol(lv.X),(num.lv.c+num.RR))
-      if((randomB!=FALSE)&(num.lv.c+num.RR)>0)sigmab_lv <- exp(param[sib])
+      if((num.lv.c+num.RR)>0){
+        if(randomB==FALSE){
+          b.lv <- matrix(0,ncol=num.RR+num.lv.c,nrow=ncol(lv.X))
+          b.lv[lower.tri(b.lv,diag=T)] <- param[bi.lv]
+        }else{
+          sigmab_lv <- exp(param[sib])
+          b.lv <- matrix(param[bi.lv],ncol(lv.X),(num.lv.c+num.RR))
+        }
+        
+      }
       new.loglik <- objr$env$value.best[1]
 
     }
@@ -880,7 +904,6 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
       }
       
 #### Set up data and parameters
-      
       if(family == "ordinal"){
         data.list$method = 0
       }
@@ -919,7 +942,15 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
         }
         lambda <- objr$env$last.par.best[names(objr$env$last.par.best)=="lambda"]
         lambda2 <- matrix(objr$env$last.par.best[names(objr$env$last.par.best)=="lambda2"],ncol=num.RR,nrow=p,byrow=T)
-        b.lv <- matrix(objr$env$last.par.best[names(objr$env$last.par.best)=="b_lv"],ncol=num.RR,nrow=ncol(lv.X))
+        if((num.lv.c+num.RR)>0){
+          if(randomB==FALSE){
+            b.lv <- matrix(0,ncol=num.RR+num.lv.c,nrow=ncol(lv.X))
+            b.lv[lower.tri(b.lv,diag=T)] <- objr$env$last.par.best[names(objr$env$last.par.best)=="b_lv"]
+          }else{
+            b.lv <-  matrix(objr$env$last.par.best[names(objr$env$last.par.best)=="b_lv"],ncol=num.RR,nrow=ncol(lv.X))
+            }
+          
+        }
         sigmab_lv <- objr$env$last.par.best[names(objr$env$last.par.best)=="sigmab_lv"]
         b <- matrix(objr$env$last.par.best[names(objr$env$last.par.best)=="b"],num.X+1,p)
 
@@ -1022,8 +1053,14 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
       beta0 <- betaM[,1]
       if(!is.null(X)) betas=betaM[,-1]
       if((num.lv.c+num.RR)>0){
-        b.lv <- matrix(param[bi.lv],ncol(lv.X),(num.lv.c+num.RR))
-        if(randomB!=FALSE)sigmab_lv <- exp(param[sib])
+        if(randomB==FALSE){
+          b.lv <- matrix(0,ncol=num.RR+num.lv.c,nrow=ncol(lv.X))
+          b.lv[lower.tri(b.lv,diag=T)] <- param[bi.lv]
+        }else{
+          b.lv <-  matrix(param[bi.lv],ncol=num.RR,nrow=ncol(lv.X))
+          sigmab_lv <- exp(param[sib])
+        }
+        
       }
       
       new.loglik <- objr$env$value.best[1]
@@ -1474,8 +1511,9 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
       sebetaM <- matrix(se[1:((num.X+1)*p)],p,num.X+1,byrow=TRUE);  se <- se[-(1:((num.X+1)*p))]
 
       if((num.lv.c+num.RR)>0&randomB==FALSE){
-        se.LvXcoef <- matrix(se[1:((num.lv.c+num.RR)*ncol(lv.X))],ncol=(num.lv.c+num.RR),nrow=ncol(lv.X))
-        se <- se[-c(1:((num.lv.c+num.RR)*ncol(lv.X)))]
+        se.LvXcoef <- matrix(0,ncol=num.lv.c+num.RR,nrow=ncol(lv.X))
+        se.LvXcoef[lower.tri(se.LvXcoef,diag=T)] <- se[1:sum(lower.tri(se.LvXcoef,diag=T))]
+        se <- se[-c(1:sum(lower.tri(se.LvXcoef,diag=T)))]
         colnames(se.LvXcoef) <- paste("CLV",1:(num.lv.c+num.RR),sep="")
         row.names(se.LvXcoef) <- colnames(lv.X)
         out$sd$LvXcoef <- se.LvXcoef

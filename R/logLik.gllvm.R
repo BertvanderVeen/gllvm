@@ -36,6 +36,9 @@ logLik.gllvm <- function(object, ...)
     object$params$Br <- NULL
     object$params$sigmaB <- object$params$sigmaB[lower.tri(object$params$sigmaB, diag = TRUE)]
   }
+  if(object$randomB==FALSE&(object$num.RR+object$num.lv.c)>0){
+    object$params$LvXcoef[upper.tri(object$params$LvXcoef,diag=F)]<-NA
+  }
   if(object$randomB!=FALSE){
     object$params$LvXcoef <- NULL
   }

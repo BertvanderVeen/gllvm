@@ -235,6 +235,7 @@ Type objective_function<Type>::operator() ()
           
         }
       }
+      
     }
   }
   matrix<Type> mu(n,p);
