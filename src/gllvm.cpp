@@ -221,7 +221,7 @@ Type objective_function<Type>::operator() ()
             } else if (j == i){
               newlam(i+nlvr-num_lv-num_lv_c,j) = 1;
             }else if (j > i){
-              newlam(i+nlvr-num_lv-num_lv_c,j) = lambda(j+i*p-(i*(i-1))/2-2*i-1);//lambda(i+j+i*p-(i*(i-1))/2-2*i);
+              newlam(i+nlvr-num_lv-num_lv_c,j) = 0;lambda(j+i*p-(i*(i-1))/2-2*i-1);//lambda(i+j+i*p-(i*(i-1))/2-2*i);
             }
           }else{
             if (j < i){

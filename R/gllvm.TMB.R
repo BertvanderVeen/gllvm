@@ -341,11 +341,19 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
     
     map.list <- list()    
     map.list$B <- map.list$Br <- map.list$sigmaB <- map.list$sigmaij <- map.list$Abb <- factor(NA)
-    if(randomB==FALSE&(num.RR+num.lv.c)>0){
-      b.lv.map <- (1:prod(dim(b.lv)))
-      b.lv.map[!lower.tri(b.lv,diag=T)]<-NA
-      map.list$b_lv <- factor(b.lv.map)
-    }
+    
+    
+  #  if((num.RR+num.lv.c+num.lv)>0){
+  #    theta.lv.map <- (1:prod(dim(lambdas)))
+  #    mat <-
+  #      map.list$theta <- factor(theta.lv.map)
+  #  }
+  #  if(randomB==FALSE&(num.RR+num.lv.c)>0){
+  #    mat <- diag(rep(FALSE,num.lv.c+num.RR))
+  #    mat[1:(num.lv.c+num.RR),1:(num.lv.c+num.RR)] <- FALSE
+  #    theta.lv.map[which(cbind(rbind(mat,matrix(FALSE,ncol=num.RR+num.lv.c,nrow=p-num.RR+num.lv.c)),matrix(F,ncol=num.lv,nrow=p)))]<-NA
+  #  }
+    
     
     xb<-Br<-matrix(0); sigmaB=diag(1);sigmaij=0; lg_Ar=0; Abb=0; Ab_lv = 0;
 #    if(row.eff==FALSE) map.list$r0 <- factor(rep(NA,n))
@@ -779,7 +787,7 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
       if((num.lv.c+num.RR)>0){
         if(randomB==FALSE){
           b.lv <- matrix(0,ncol=num.RR+num.lv.c,nrow=ncol(lv.X))
-          b.lv[lower.tri(b.lv,diag=T)] <- param[bi.lv]
+          b.lv <- param[bi.lv]
         }else{
           sigmab_lv <- exp(param[sib])
           b.lv <- matrix(param[bi.lv],ncol(lv.X),(num.lv.c+num.RR))
@@ -945,7 +953,7 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
         if((num.lv.c+num.RR)>0){
           if(randomB==FALSE){
             b.lv <- matrix(0,ncol=num.RR+num.lv.c,nrow=ncol(lv.X))
-            b.lv[lower.tri(b.lv,diag=T)] <- objr$env$last.par.best[names(objr$env$last.par.best)=="b_lv"]
+            b.lv <- objr$env$last.par.best[names(objr$env$last.par.best)=="b_lv"]
           }else{
             b.lv <-  matrix(objr$env$last.par.best[names(objr$env$last.par.best)=="b_lv"],ncol=num.RR,nrow=ncol(lv.X))
             }
@@ -1055,7 +1063,7 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
       if((num.lv.c+num.RR)>0){
         if(randomB==FALSE){
           b.lv <- matrix(0,ncol=num.RR+num.lv.c,nrow=ncol(lv.X))
-          b.lv[lower.tri(b.lv,diag=T)] <- param[bi.lv]
+          b.lv <- param[bi.lv]
         }else{
           b.lv <-  matrix(param[bi.lv],ncol=num.RR,nrow=ncol(lv.X))
           sigmab_lv <- exp(param[sib])
@@ -1512,8 +1520,8 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
 
       if((num.lv.c+num.RR)>0&randomB==FALSE){
         se.LvXcoef <- matrix(0,ncol=num.lv.c+num.RR,nrow=ncol(lv.X))
-        se.LvXcoef[lower.tri(se.LvXcoef,diag=T)] <- se[1:sum(lower.tri(se.LvXcoef,diag=T))]
-        se <- se[-c(1:sum(lower.tri(se.LvXcoef,diag=T)))]
+        se.LvXcoef <- se[1:(ncol(lv.X)*(num.RR+num.lv.c))]
+        se <- se[-c(1:(ncol(lv.X)*(num.RR+num.lv.c)))]
         colnames(se.LvXcoef) <- paste("CLV",1:(num.lv.c+num.RR),sep="")
         row.names(se.LvXcoef) <- colnames(lv.X)
         out$sd$LvXcoef <- se.LvXcoef
