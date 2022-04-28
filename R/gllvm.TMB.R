@@ -375,20 +375,27 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
     se <- NULL
 
    ### VA method, used only if there is some random effects/LVs in the model
-    
-    if((num.RR+num.lv.c)>0){
-      validpar<- function(theta,lv.X,num.RR,num.lv.c){
+  
+    if((num.RR+num.lv.c)>0&starting.val!="zero"){
+       L <- chol(cov(lv.X))
+       b.lv <- b.lv%*%solve(chol(t(b.lv)%*%t(L)%*%L%*%b.lv))
+       #       b.lv <- svd(lv.X,nv = num.RR+num.lv.c)$v
+
+    }
+    if((num.RR+num.lv.c)>0&starting.val!="zero"){
+      validpar<- function(theta){
         Bs <- matrix(0,ncol=num.RR+num.lv.c,nrow=ncol(lv.X))
         Bs[lower.tri(Bs,diag=T)] <- theta[names(theta)=="b_lv"]
-        if(all(round(var(lv.X%*%Bs),10)==diag(num.RR+num.lv.c))){
+        if(Matrix::isDiagonal(round(var(lv.X%*%Bs),8))){
           res <- TRUE
         }else{
           res <- FALSE
         }
         return(res)
       }
+
     }else{
-      validpar<-function()TRUE
+      validpar<-function(x)TRUE
     }
     if(((method %in% c("VA", "EVA")) && (nlvr>0 || row.eff == "random" || (randomB!=FALSE)))){
       # Variational covariances for latent variables
@@ -558,12 +565,12 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
         map.list2$lg_Ar = factor(rep(NA, length(lg_Ar)))
   
       parameter.list = list(r0 = matrix(r0), b = rbind(a,b), b_lv = b.lv,sigmab_lv = sigmab_lv, Ab_lv = Ab_lv, B = matrix(0), Br=Br,lambda = lambda, lambda2 = t(lambda2), sigmaLV = (sigma.lv), u = u,lg_phi=log(phi),sigmaB=log(diag(sigmaB)),sigmaij=sigmaij,log_sigma=sigma,Au=Au, lg_Ar =lg_Ar, Abb=0, zeta=zeta)
-      objr <- TMB::MakeADFun(
+      objr <<- TMB::MakeADFun(
         data = data.list, silent=TRUE,
         parameters = parameter.list, map = map.list2,
         inner.control=list(maxit = maxit), #mgcmax = 1e+200,
-        DLL = "gllvm",
-        validpar = validpar)##GLLVM
+        DLL = "gllvm")##GLLVM
+      objr$env$validpar <- validpar
       if(optimizer=="nlminb") {
         timeo <- system.time(optr <- try(nlminb(objr$par, objr$fn, objr$gr,control = list(rel.tol=reltol,iter.max=max.iter,eval.max=maxit)),silent = TRUE))
       }
@@ -594,13 +601,12 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
       parameter.list = list(r0 = matrix(r0), b = rbind(a,b), b_lv = b.lv, sigmab_lv = sigmab_lv, Ab_lv = Ab_lv, B = matrix(0), Br=Br,lambda = lambda, lambda2 = t(lambda2), sigmaLV = (sigma.lv), u = u,lg_phi=log(phi),sigmaB=log(diag(sigmaB)),sigmaij=sigmaij,log_sigma=sigma,Au=Au, lg_Ar=lg_Ar,Abb=0, zeta=zeta)
       
 #### Call makeADFun
-      objr <- TMB::MakeADFun(
+      objr <<- TMB::MakeADFun(
         data = data.list, silent=TRUE,
         parameters = parameter.list, map = map.list,
         inner.control=list(maxit = maxit), #mgcmax = 1e+200,
-        DLL = "gllvm",
-        validpar = validpar)##GLLVM
-
+        DLL = "gllvm")##GLLVM
+        objr$env$validpar <- validpar
 #### Fit model 
       
       if(optimizer=="nlminb") {
@@ -666,13 +672,13 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
 
         parameter.list = list(r0=r1, b = b1, b_lv = b.lv1, sigmab_lv = sigmab_lv1, Ab_lv = Ab_lv1, B=matrix(0), Br=Br,lambda = lambda1, lambda2 = t(lambda2), sigmaLV = sigma.lv1, u = u1,lg_phi=lg_phi1,sigmaB=log(diag(sigmaB)),sigmaij=sigmaij,log_sigma=log_sigma1,Au=Au1, lg_Ar=lg_Ar, Abb=0, zeta=zeta)
 
-        objr <- TMB::MakeADFun(
+        objr <<- TMB::MakeADFun(
           data = data.list, silent=TRUE,
           parameters = parameter.list, map = map.list,
           inner.control=list(maxit = maxit), #mgcmax = 1e+200,
-          DLL = "gllvm",
-          validpar = validpar)
-
+          DLL = "gllvm")
+        objr$env$validpar <- validpar
+        
         if(optimizer=="nlminb") {
           timeo <- system.time(optr <- try(nlminb(objr$par, objr$fn, objr$gr,control = list(rel.tol=reltol,iter.max=max.iter,eval.max=maxit)),silent = TRUE))
         }
@@ -850,13 +856,13 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
 
         parameter.list = list(r0 = matrix(r0), b = rbind(a,b), b_lv = b.lv, sigmab_lv = 0, Ab_lv = Ab_lv, B = matrix(0), Br=Br,lambda = lambda, lambda2 = t(lambda2), sigmaLV = (sigma.lv), u = u,lg_phi=log(phi),sigmaB=log(diag(sigmaB)),sigmaij=sigmaij,log_sigma=sigma,Au=0, lg_Ar =0, Abb=0, zeta=zeta)
 
-        objr <- TMB::MakeADFun(
+        objr <<- TMB::MakeADFun(
           data = data.list, silent=TRUE,
           parameters = parameter.list, map = map.list2,
           inner.control=list(maxit = maxit), #mgcmax = 1e+200,
-          DLL = "gllvm",
-          validpar = validpar)##GLLVM
-
+          DLL = "gllvm")##GLLVM
+        objr$env$validpar <- validpar
+        
         if(optimizer=="nlminb") {
           timeo <- system.time(optr <- try(nlminb(objr$par, objr$fn, objr$gr,control = list(rel.tol=reltol,iter.max=max.iter,eval.max=maxit)),silent = TRUE))
         }
@@ -927,12 +933,13 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
       parameter.list = list(r0=matrix(r0), b = rbind(a,b), b_lv = b.lv, sigmab_lv = sigmab_lv, Ab_lv = Ab_lv, B=matrix(0), Br=Br,lambda = lambda, lambda2 = t(lambda2), sigmaLV = (sigma.lv), u = u, lg_phi=log(phi),sigmaB=log(diag(sigmaB)),sigmaij=sigmaij,log_sigma=c(sigma), Au=0, lg_Ar=0, Abb=0, zeta=zeta)
 
       #### Call makeADFun
-      objr <- TMB::MakeADFun(
+      objr <<- TMB::MakeADFun(
         data = data.list, silent=!trace,
         parameters = parameter.list, map = map.list,
         inner.control=list(mgcmax = 1e+200,maxit = maxit,tol10=0.01),
-        random = randomp, DLL = "gllvm",
-        validpar = validpar)
+        random = randomp, DLL = "gllvm")
+      objr$env$validpar <- validpar
+      
      #### Fit model 
       
       # Not used for now
@@ -977,12 +984,12 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
         parameter.list = list(r0=matrix(r0), b = b, b_lv = b.lv, sigmab_lv = sigmab_lv, Ab_lv = Ab_lv, B=matrix(0), Br=Br,lambda = lambda, lambda2 = t(lambda2), sigmaLV = (sigma.lv), u = u, lg_phi=log(phi),sigmaB=log(diag(sigmaB)),sigmaij=sigmaij,log_sigma=c(sigma), Au=0, lg_Ar=0, Abb=0, zeta=zeta)
 
         #### Call makeADFun
-        objr <- TMB::MakeADFun(
+        objr <<- TMB::MakeADFun(
           data = data.list, silent=!trace,
           parameters = parameter.list, map = map.list,
           inner.control=list(mgcmax = 1e+200,maxit = maxit,tol10=0.01),
-          random = randomp, DLL = "gllvm",
-          validpar = validpar)
+          random = randomp, DLL = "gllvm")
+        objr$env$validpar <- validpar
 
         if(optimizer=="nlminb") {
           timeo <- system.time(optr <- try(nlminb(objr$par, objr$fn, objr$gr,control = list(rel.tol=reltol,iter.max=max.iter,eval.max=maxit)),silent = TRUE))
