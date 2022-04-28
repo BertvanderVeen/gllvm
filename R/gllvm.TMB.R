@@ -376,6 +376,20 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
 
    ### VA method, used only if there is some random effects/LVs in the model
     
+    if((num.RR+num.lv.c)>0){
+      validpar<- function(theta,lv.X,num.RR,num.lv.c){
+        Bs <- matrix(0,ncol=num.RR+num.lv.c,nrow=ncol(lv.X))
+        Bs[lower.tri(Bs,diag=T)] <- theta[names(theta)=="b_lv"]
+        if(all(round(var(lv.X%*%Bs),10)==diag(num.RR+num.lv.c))){
+          res <- TRUE
+        }else{
+          res <- FALSE
+        }
+        return(res)
+      }
+    }else{
+      validpar<-function()TRUE
+    }
     if(((method %in% c("VA", "EVA")) && (nlvr>0 || row.eff == "random" || (randomB!=FALSE)))){
       # Variational covariances for latent variables
       if((num.lv+num.lv.c)>0){
@@ -466,7 +480,7 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
         }
         start.struc="all"
       }
-      
+
     ### family settings
       extra <- 0
       if(family == "poisson") { familyn <- 0}
@@ -510,8 +524,7 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
       }
       
         if(quadratic==FALSE)map.list$lambda2 = factor(NA)
-      
-      
+
   ## generate starting values quadratic coefficients in some cases
       if(starting.val!="zero" && quadratic != FALSE && (num.lv+num.lv.c+num.RR)>0){
       data.list = list(y = y, x = Xd, x_lv = lv.X, xr=xr, xb=xb, dr0 = dr, offset=offset, num_lv = num.lv, num_lv_c = num.lv.c, num_RR = num.RR, quadratic = 1, family=familyn,extra=extra,method=switch(method, VA=0, EVA=2),model=0,random=randoml, zetastruc = ifelse(zeta.struc=="species",1,0), rstruc = rstruc, times = times, cstruc=cstrucn, dc=dist)
@@ -549,7 +562,8 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
         data = data.list, silent=TRUE,
         parameters = parameter.list, map = map.list2,
         inner.control=list(maxit = maxit), #mgcmax = 1e+200,
-        DLL = "gllvm")##GLLVM
+        DLL = "gllvm",
+        validpar = validpar)##GLLVM
       if(optimizer=="nlminb") {
         timeo <- system.time(optr <- try(nlminb(objr$par, objr$fn, objr$gr,control = list(rel.tol=reltol,iter.max=max.iter,eval.max=maxit)),silent = TRUE))
       }
@@ -584,7 +598,8 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
         data = data.list, silent=TRUE,
         parameters = parameter.list, map = map.list,
         inner.control=list(maxit = maxit), #mgcmax = 1e+200,
-        DLL = "gllvm")##GLLVM
+        DLL = "gllvm",
+        validpar = validpar)##GLLVM
 
 #### Fit model 
       
@@ -655,7 +670,8 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
           data = data.list, silent=TRUE,
           parameters = parameter.list, map = map.list,
           inner.control=list(maxit = maxit), #mgcmax = 1e+200,
-          DLL = "gllvm")
+          DLL = "gllvm",
+          validpar = validpar)
 
         if(optimizer=="nlminb") {
           timeo <- system.time(optr <- try(nlminb(objr$par, objr$fn, objr$gr,control = list(rel.tol=reltol,iter.max=max.iter,eval.max=maxit)),silent = TRUE))
@@ -838,7 +854,8 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
           data = data.list, silent=TRUE,
           parameters = parameter.list, map = map.list2,
           inner.control=list(maxit = maxit), #mgcmax = 1e+200,
-          DLL = "gllvm")##GLLVM
+          DLL = "gllvm",
+          validpar = validpar)##GLLVM
 
         if(optimizer=="nlminb") {
           timeo <- system.time(optr <- try(nlminb(objr$par, objr$fn, objr$gr,control = list(rel.tol=reltol,iter.max=max.iter,eval.max=maxit)),silent = TRUE))
@@ -914,7 +931,8 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
         data = data.list, silent=!trace,
         parameters = parameter.list, map = map.list,
         inner.control=list(mgcmax = 1e+200,maxit = maxit,tol10=0.01),
-        random = randomp, DLL = "gllvm")
+        random = randomp, DLL = "gllvm",
+        validpar = validpar)
      #### Fit model 
       
       # Not used for now
@@ -963,7 +981,8 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
           data = data.list, silent=!trace,
           parameters = parameter.list, map = map.list,
           inner.control=list(mgcmax = 1e+200,maxit = maxit,tol10=0.01),
-          random = randomp, DLL = "gllvm")
+          random = randomp, DLL = "gllvm",
+          validpar = validpar)
 
         if(optimizer=="nlminb") {
           timeo <- system.time(optr <- try(nlminb(objr$par, objr$fn, objr$gr,control = list(rel.tol=reltol,iter.max=max.iter,eval.max=maxit)),silent = TRUE))
