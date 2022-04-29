@@ -393,7 +393,8 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, lv.formula = NUL
         }
         return(res)
       }
-
+      validpar<-function(x)TRUE
+      
     }else{
       validpar<-function(x)TRUE
     }
