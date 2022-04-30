@@ -45,10 +45,14 @@ confint.gllvm <- function(object, parm=NULL, level = 0.95, ...) {
     }
     
     
-    parm_all <- c("sigma.lv","theta", "LvXcoef","beta0", "Xcoef", "B", "row.params", "sigma", "sigmaB", "inv.phi", "phi", "p","zeta")
+    parm_all <- c("sigma.lv","theta", "LvXcoef","beta0", "Xcoef", "B", "row.params", "sigma", "sigmaB", "sigmaLvXcoef", "inv.phi", "phi", "p","zeta")
+    if(object$randomB!=FALSE){
+      object$params$LvXcoef <- NULL
+    }
     parmincl <- parm_all[parm_all %in% names(object$params)]
     cilow <- unlist(object$params[parmincl]) + qnorm(alfa) * unlist(object$sd[parmincl])
     ciup <- unlist(object$params[parmincl]) + qnorm(1 - alfa) * unlist(object$sd[parmincl])
+    
     M <- cbind(cilow, ciup)
 
     colnames(M) <- c(paste(alfa * 100, "%"), paste((1 - alfa) * 100, "%"))
@@ -113,7 +117,7 @@ confint.gllvm <- function(object, parm=NULL, level = 0.95, ...) {
       }
       cal <- cal+num.lv+num.lv.c
     }
-    if((num.lv.c+num.RR)>0){
+    if((num.lv.c+num.RR)>0&object$randomB==FALSE){
       rnames[-c(1:cal)][1:(ncol(object$lv.X)*(num.lv.c+num.RR))] <- paste(rep(colnames(object$lv.X),2),"LV",rep(1:(num.lv.c+num.RR),each=ncol(object$lv.X)),sep=".")
       cal<-cal + ncol(object$lv.X)*(num.lv.c+num.RR)
     }
@@ -152,6 +156,9 @@ confint.gllvm <- function(object, parm=NULL, level = 0.95, ...) {
     }
     if (!is.null(object$randomX)) {
       cal <- cal + length(object$params$sigmaB)
+    }
+    if (object$randomB!=FALSE) {
+      cal <- cal + length(object$params$sigmaLvXcoef)
     }
     if(object$family == "negative.binomial"){
       s <- length(unique(object$disp.group))
@@ -215,12 +222,19 @@ confint.gllvm <- function(object, parm=NULL, level = 0.95, ...) {
       
       
     }
-    if("LvXcoef"%in%parm){
+    if("LvXcoef"%in%parm&object$randomB==FALSE){
       names(cilow)[gsub("LvXcoef.*","LvXcoef",names(unlist(object$sd[parm])))%in%"LvXcoef"] <-paste(rep(colnames(object$lv.X),2),"LV",rep(1:(num.lv.c+num.RR),each=ncol(object$lv.X)),sep=".")
       names(ciup)[gsub("LvXcoef.*","LvXcoef",names(unlist(object$sd[parm])))%in%"LvXcoef"] <- paste(rep(colnames(object$lv.X),2),"LV",rep(1:(num.lv.c+num.RR),each=ncol(object$lv.X)),sep=".")
     }
-    if("sigma.lv"%in%parm){
+    if("sigmaLvXcoef"%in%parm&object$randomB!=FALSE){
+      if(object$randomB=="LV"){
+        names(cilow)[gsub("sigmaLvXcoef.*","sigmaLvXcoef",names(unlist(object$sd[parm])))%in%"sigmaLvXcoef"]<-  c(paste("sigmaLvXcoef.LV", 1:(num.RR+num.lv.c), sep=""))
+      }else if(object$randomB=="P"){
+        names(cilow)[gsub("sigmaLvXcoef.*","sigmaLvXcoef",names(unlist(object$sd[parm])))%in%"sigmaLvXcoef"]<-  c(paste("sigmaLvXcoef.", colnames(object$lv.X), sep=""))
+      }
       
+    }
+    if("sigma.lv"%in%parm){
       if(num.lv>0&num.lv.c>0){
         names(cilow)[gsub("sigma.lv.*","sigma.lv",names(unlist(object$sd[parm])))%in%"sigma.lv"]<-  c(paste("sigma.CLV", 1:num.lv.c, sep=""),paste("sigma.LV", 1:num.lv, sep=""))
       }else if(num.lv>0){
@@ -229,7 +243,6 @@ confint.gllvm <- function(object, parm=NULL, level = 0.95, ...) {
         names(cilow)[gsub("sigma.lv.*","sigma.lv",names(unlist(object$sd[parm])))%in%"sigma.lv"]<-  c(paste("sigma.CLV", 1:num.lv.c, sep=""))
       }
     }
-      
     
     M <- cbind(cilow, ciup)
     
