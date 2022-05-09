@@ -133,6 +133,10 @@ summary.gllvm <- function(object, digits = max(3L, getOption("digits") - 3L),
       for(i in 1:ncol(object$lv.X)){
         rotSD[i,] <- sqrt(abs(diag(t(svd_rotmat_sites[1:(num.lv.c+num.RR),1:(num.lv.c+num.RR)])%*%covB[seq(i,(num.RR+num.lv.c)*ncol(object$lv.X),by=ncol(object$lv.X)),seq(i,(num.RR+num.lv.c)*ncol(object$lv.X),by=ncol(object$lv.X))]%*%svd_rotmat_sites[1:(num.lv.c+num.RR),1:(num.lv.c+num.RR)])))
       }
+      if(object$pivot=="rows"){
+        rotSD <- object$TMBfn$report()$Perm%*%rotSD
+      }
+      
       pars <- c(LVcoef)
       se <- c(rotSD)
       

@@ -431,18 +431,11 @@ start.values.gllvm.TMB <- function(y, X = NULL, lv.X = NULL, TR=NULL, family,
       params[,(ncol(params) - (num.lv.c+num.RR) - num.lv + 1):ncol(params)] <- gamma
       index <- matrix(0,n,num.lv.c+num.lv)
     }
-    if(pivot=="columns" && (num.lv.c+num.RR)>0){
-      params[,2:(ncol(params)-num.lv)] <- matrix(rnorm(p*(num.lv.c+num.RR),sd=0.01),nrow=p, ncol=num.lv.c+num.RR)
-    }
     
     phi <- rep(1,p)
     if((num.lv.c+num.RR)>0){
-      if(pivot=="columns"){
-        b.lv <- matrix(0.01,nrow=ncol(lv.X),ncol=(num.lv.c+num.RR))  
-      }else if(pivot=="rows"){
-        b.lv <- matrix(rnorm(ncol(lv.X)*(num.lv.c+num.RR),sd = 0.01),nrow=ncol(lv.X),ncol=(num.lv.c+num.RR))
-      }
-      }
+      b.lv <- matrix(0.1,nrow=ncol(lv.X),ncol=(num.lv.c+num.RR))
+    }
     sigma.lv <- rep(1,num.lv+num.lv.c)
   }
   
@@ -494,7 +487,14 @@ start.values.gllvm.TMB <- function(y, X = NULL, lv.X = NULL, TR=NULL, family,
     if(num.lv.c>0){
       b.lv[,1:num.lv.c]<-t(t(b.lv[,1:num.lv.c])*abs(sigma.lv[1:num.lv.c]))
     }
-
+    if(starting.val!="zero"&randomB==FALSE){
+    #compute a LU decomposition for upper triangular B, gamma
+    thetab <- out$params[,c(1+1:(num.RR+num.lv.c))]%*%t(b.lv)
+    ludecomp <- Matrix::lu(thetab)
+    ludecomp <- Matrix::expand(ludecomp)
+    out$params[,c(1+1:(num.RR+num.lv.c))] <- as.matrix(ludecomp$L[,1:(num.RR+num.lv.c),drop=F])
+    b.lv <- t(as.matrix(ludecomp$U))[,1:(num.RR+num.lv.c)]
+    }
     out$b.lv <- b.lv
     if(randomB!=FALSE){
       if(starting.val!="zero"&randomB=="LV"){
@@ -551,7 +551,7 @@ start.values.gllvm.TMB <- function(y, X = NULL, lv.X = NULL, TR=NULL, family,
 
 
 FAstart <- function(eta, family, y, num.lv = 0, num.lv.c = 0, num.RR = 0, zeta = NULL, zeta.struc = "species", phis = NULL, 
-                    jitter.var = 0, resi = NULL, row.eff = FALSE, lv.X, link = NULL, maxit=NULL,max.iter=NULL, Power = NULL, disp.group = NULL, randomB = FALSE, pivot = "columns"){
+                    jitter.var = 0, resi = NULL, row.eff = FALSE, lv.X, link = NULL, maxit=NULL,max.iter=NULL, Power = NULL, disp.group = NULL, randomB = FALSE, pivot = "columns") {
   n<-NROW(y); p <- NCOL(y)
   row.params <- NULL # !!!!
   b.lv <- NULL
@@ -721,36 +721,20 @@ FAstart <- function(eta, family, y, num.lv = 0, num.lv.c = 0, num.RR = 0, zeta =
       index.lm <- lm(index~0+lv.X)
       b.lv <- coef(index.lm)
       
-      if(pivot == "columns"|pivot == "none"){
-        beta <- gamma %*% t(b.lv)
-        decomp <- expand(lu(beta))
-
-        b.lv <- as.matrix(t(decomp$U)[,1:num.lv.c,drop=F])
-        gamma <- as.matrix(decomp$L[,1:num.lv.c,drop=F])
-      }else if(pivot == "rows"){
-        beta <- b.lv %*% t(gamma)
-        decomp <- expand(lu(beta))
-        
-        b.lv <- as.matrix(decomp$L[,1:num.lv.c])
-        gamma <- as.matrix(t(decomp$U)[,1:num.lv.c])
-        b.lv <- b.lv %*% diag(diag(gamma))
-      }
-      
       #Ensures independence of LVs with predictors
       index <- matrix(residuals.lm(index.lm),ncol=num.lv.c)
       colnames(gamma) <- paste("CLV",1:num.lv.c,sep='')
       
-      # if(num.lv.c>1 && p>2){
-      #   qr.gamma <- qr(t(gamma))
-      #   gamma.new<-t(qr.R(qr.gamma))
-      #   sig <- sign(diag(gamma.new))
-      #   gamma <- t(t(gamma.new)*sig)
-      #   index<-(index%*%qr.Q(qr.gamma))
-      #   b.lv<-b.lv%*%qr.Q(qr.gamma)
-      #   b.lv<-t(t(b.lv)*sig)
-      #   index <- t(t(index)*sig)
-      # } else 
-        if(p>n & num.lv.c>1) {
+      if(num.lv.c>1 && p>2){
+        qr.gamma <- qr(t(gamma))
+        gamma.new<-t(qr.R(qr.gamma))
+        sig <- sign(diag(gamma.new))
+        gamma <- t(t(gamma.new)*sig)
+        index<-(index%*%qr.Q(qr.gamma))
+        b.lv<-b.lv%*%qr.Q(qr.gamma)
+        b.lv<-t(t(b.lv)*sig)
+        index <- t(t(index)*sig)
+      } else if(p>n & num.lv.c>1) {
         sdi <- sqrt(diag(cov(index)))
         sdt <- sqrt(diag(cov(gamma)))
         indexscale <- diag(x = 0.8/sdi, nrow = length(sdi))
@@ -760,7 +744,6 @@ FAstart <- function(eta, family, y, num.lv = 0, num.lv.c = 0, num.RR = 0, zeta =
       }
     } else {
       b.lv <- matrix(1,ncol=num.lv.c,nrow=ncol(lv.X))
-      b.lv[upper.tri(b.lv,diag=F)] <- 0
       gamma <- matrix(1,p,num.lv.c)
       gamma[upper.tri(gamma)]=0
       index <- matrix(0,n,num.lv.c)
@@ -899,19 +882,31 @@ FAstart <- function(eta, family, y, num.lv = 0, num.lv.c = 0, num.RR = 0, zeta =
     
     #Alternative for RRcoef is factor analysis of the predictors.
     RRmod <- lm(resi~0+lv.X)
-    if(pivot == "columns" | pivot == "none"){
-      beta <- t(coef(RRmod))
-      decomp <- expand(lu(beta))
-      RRcoef <- as.matrix(t(decomp$U)[,1:num.RR,drop=F])
-      RRgamma <- as.matrix(decomp$L[,1:num.RR,drop=F])
-    }else if(pivot == "rows"){
-      beta <- coef(RRmod)
-      decomp <- expand(lu(beta))
-      RRcoef <- as.matrix(decomp$L[,1:num.RR])
-      RRgamma <- as.matrix(t(decomp$U)[,1:num.RR])
-      RRcoef <- RRcoef %*% diag(diag(RRgamma))
+    beta <- t(coef(RRmod))
+    if(ncol(beta)>1&(randomB==FALSE)){
+    betaSD=apply(beta,1,sd)
+    beta=beta/betaSD
     }
-
+    qr.beta=qr(t(beta))
+    R=t(qr.R(qr.beta))
+    R=R[,1:num.RR,drop=F]/sqrt(num.RR*nrow(RRmod$coefficients))
+    Q=t(qr.Q(qr.beta))[1:num.RR,]
+    RRcoef = Q*sqrt(num.RR*nrow(RRmod$coefficients))
+    sgn=t(sign(diag(R)))
+    if(num.RR>1){
+      RRgamma = R%*%diag(c(sgn))
+      RRcoef = t(diag(c(sgn))%*%RRcoef)
+    }else{
+      RRgamma = R*c(sgn)
+      RRcoef = c(sgn)*RRcoef
+    }
+    #transfer RRgamma diagonals to RRcoef
+    RRcoef <- t(t(RRcoef)*diag(RRgamma))
+    RRgamma<-t(t(RRgamma)/diag(RRgamma))
+    # qr.gam <- qr(coef(RRmod))
+    # RRcoef <- qr.Q(qr.gam)[,1:num.RR]
+    # RRcoef <- t(t(RRcoef)*diag(qr.R(qr.gam))[1:num.RR])
+    # RRgamma <- t(qr.R(qr.gam)/diag(qr.R(qr.gam)))[,1:num.RR]
     eta <- eta + lv.X%*%RRcoef%*%t(RRgamma) 
   }
   
@@ -1244,15 +1239,24 @@ FAstart <- function(eta, family, y, num.lv = 0, num.lv.c = 0, num.RR = 0, zeta =
         }
         gamma <- t(t(gamma.new)*sig)
         index<-(index%*%qr.Q(qr.gamma))
+        if(num.lv.c>0)b.lv<-b.lv%*%qr.Q(qr.gamma)
         index <- t(t(index)*sig)
       }else{
-        qr.gamma <- qr(t(gamma[,(num.lv.c+1):ncol(gamma),drop=F]))
-        gamma.new<-t(qr.R(qr.gamma))
-        sig <- sign(diag(gamma.new))
-        gamma.new <- t(t(gamma.new)*sig)
-        gamma[,(num.lv.c+1):ncol(gamma)] <-gamma.new
-        index[,(num.lv.c+1):ncol(index)]<-(index[,(num.lv.c+1):ncol(index)]%*%qr.Q(qr.gamma))
-        index[,(num.lv.c+1):ncol(index)] <- t(t(index[,(num.lv.c+1):ncol(index)])*sig)
+        qr.gamma1 <- qr(t(gamma[,1:num.lv.c,drop=F]))
+        qr.gamma2 <- qr(t(gamma[,(num.lv.c+1):ncol(gamma),drop=F]))
+        gamma.new1<-t(qr.R(qr.gamma1))
+        gamma.new2<-t(qr.R(qr.gamma2))
+        sig1 <- sign(diag(gamma.new1))
+        b.lv<-b.lv%*%qr.Q(qr.gamma1)
+        b.lv <- t(t(b.lv)*sig1)
+        sig2 <- sign(diag(gamma.new2))
+        gamma.new1 <- t(t(gamma.new1)*sig1)
+        gamma.new2 <- t(t(gamma.new2)*sig2)
+        gamma <- cbind(gamma.new1,gamma.new2)
+        index[,1:num.lv.c]<-(index[,1:num.lv.c,drop=F]%*%qr.Q(qr.gamma1)[1:num.lv.c,1:num.lv.c])
+        index[,(num.lv.c+1):ncol(index)]<-(index[,(num.lv.c+1):ncol(index)]%*%qr.Q(qr.gamma2))
+        index[,1:num.lv.c] <- t(t(index[,1:num.lv.c])*sig1[1:num.lv.c])
+        index[,(num.lv.c+1):ncol(index)] <- t(t(index[,(num.lv.c+1):ncol(index)])*sig2)
       }
     } else {
       if(num.lv.c>0&num.lv.c==0|num.lv>0&num.lv==0){
@@ -1261,9 +1265,13 @@ FAstart <- function(eta, family, y, num.lv = 0, num.lv.c = 0, num.RR = 0, zeta =
         gamma <- t(t(gamma)*sig)
         index <- t(t(index)*sig)
       }else if(num.lv.c>0&num.lv>0){
-        sig <- sign(diag(gamma[,(num.lv.c+1):ncol(gamma),drop=F]))
-        gamma[,(num.lv.c+1):ncol(gamma)] <- t(t(gamma[,(num.lv.c+1):ncol(gamma),drop=F])*sig)
-        index[,(num.lv.c+1):ncol(index)] <- t(t(index[,(num.lv.c+1):ncol(index),drop=F])*sig)
+        sig1 <- sign(diag(gamma[,1:num.lv.c,drop=F]));
+        sig2 <- sign(diag(gamma[,(num.lv.c+1):ncol(gamma),drop=F]))
+        b.lv <- t(t(b.lv)*sig1)
+        gamma[,1:num.lv.c] <- t(t(gamma[,1:num.lv.c,drop=F])*sig1)
+        gamma[,(num.lv.c+1):ncol(gamma)] <- t(t(gamma[,(num.lv.c+1):ncol(gamma),drop=F])*sig2)
+        index[,1:num.lv.c] <- t(t(index[,1:num.lv.c,drop=F])*sig1)
+        index[,(num.lv.c+1):ncol(index)] <- t(t(index[,(num.lv.c+1):ncol(index),drop=F])*sig2)
       }
     }
     if(p>n) {
@@ -1275,6 +1283,13 @@ FAstart <- function(eta, family, y, num.lv = 0, num.lv.c = 0, num.RR = 0, zeta =
         gammascale <- diag(x = 1/sdt, nrow = length(sdi))
         gamma <- gamma%*%gammascale  
       }else if(num.lv>0&num.lv.c>0){
+        sdi <- sqrt(diag(cov(index[,1:num.lv.c,drop=F])))
+        sdt <- sqrt(diag(cov(gamma[,1:num.lv.c,drop=F])))
+        indexscale <- diag(x = 0.8/sdi, nrow = length(sdi))
+        index[,1:num.lv.c] <- index[,1:num.lv.c,drop=F]%*%indexscale
+        gammascale <- diag(x = 1/sdt, nrow = length(sdi))
+        gamma[,1:num.lv.c] <- gamma[,1:num.lv.c,drop=F]%*%gammascale  
+        
         sdi <- sqrt(diag(cov(index[,(num.lv.c+1):ncol(index),drop=F])))
         sdt <- sqrt(diag(cov(gamma[,(num.lv.c+1):ncol(index),drop=F])))
         indexscale <- diag(x = 0.8/sdi, nrow = length(sdi))
@@ -1292,6 +1307,13 @@ FAstart <- function(eta, family, y, num.lv = 0, num.lv.c = 0, num.RR = 0, zeta =
         gammascale <- diag(x = 0.8/sdt, nrow = length(sdi))
         gamma <- gamma%*%gammascale  
       }else if(num.lv>0&num.lv.c>0){
+        sdi <- sqrt(diag(cov(index[,1:num.lv.c,drop=F])))
+        sdt <- sqrt(diag(cov(gamma[,1:num.lv.c,drop=F])))
+        indexscale <- diag(x = 1/sdi, nrow = length(sdi))
+        index[,1:num.lv.c] <- index[,1:num.lv.c,drop=F]%*%indexscale
+        gammascale <- diag(x = 0.8/sdt, nrow = length(sdi))
+        gamma[,1:num.lv.c] <- gamma[,1:num.lv.c,drop=F]%*%gammascale
+        
         sdi <- sqrt(diag(cov(index[,(num.lv.c+1):ncol(index),drop=F])))
         sdt <- sqrt(diag(cov(gamma[,(num.lv.c+1):ncol(index),drop=F])))
         indexscale <- diag(x = 1/sdi, nrow = length(sdi))

@@ -489,7 +489,12 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
         for(i in 1:ncol(object$lv.X)){
           rotSD[i,] <- sqrt(abs(diag(t(svd_rotmat_sites[1:(num.lv.c+num.RR),1:(num.lv.c+num.RR)])%*%covB[seq(i,(num.RR+num.lv.c)*ncol(object$lv.X),by=ncol(object$lv.X)),seq(i,(num.RR+num.lv.c)*ncol(object$lv.X),by=ncol(object$lv.X))]%*%svd_rotmat_sites[1:(num.lv.c+num.RR),1:(num.lv.c+num.RR)])))
         }
+        
+        if(object$pivot!="rows"){
         rotSD <- rotSD[,which.lvs]
+        }else{
+        rotSD <- object$TMBfn$report()$Perm%*%rotSD[,which.lvs]
+        }
         cilow <- LVcoef+qnorm( (1 - 0.95) / 2)*rotSD
         ciup <-LVcoef+qnorm(1- (1 - 0.95) / 2)*rotSD
         lty <- rep(arrow.lty,ncol(object$lv.X))

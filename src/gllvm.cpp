@@ -16,6 +16,7 @@ Type objective_function<Type>::operator() ()
   DATA_MATRIX(xb); // envs with random slopes
   DATA_ARRAY(dr0); // design matrix for rows, (times, n, nr)
   DATA_MATRIX(offset); //offset matrix
+  DATA_INTEGER(pivot);
   
   PARAMETER_MATRIX(r0); // site/row effects
   PARAMETER_MATRIX(b); // matrix of species specific intercepts and coefs
@@ -67,8 +68,8 @@ Type objective_function<Type>::operator() ()
   if(rstruc>0){
     nr = dr.cols();
   }
-  
-  
+
+
   int l = xb.cols();
   vector<Type> iphi = exp(lg_phi);
   vector<Type> Ar = exp(lg_Ar);
@@ -238,6 +239,154 @@ Type objective_function<Type>::operator() ()
       
     }
   }
+  
+  
+  int dimPerm;
+  if(pivot == 1){
+    dimPerm = Klv;
+  }else if(pivot == 2){
+    dimPerm = p;
+  }
+  
+  matrix<Type>Perm(dimPerm,dimPerm);
+  Perm.fill(0.0);
+  Perm.diagonal().array() = 1;
+  
+  matrix<Type>Perm2(dimPerm,dimPerm);
+  Perm2.fill(0.0);
+  Perm2.diagonal().array() = 1;
+  
+  
+  if((num_RR+num_lv_c)>0){
+    //pivoting based on square root of euclidean norm in P^{-1}\beta^\top
+    //i.e. the algorithm "learns" the ideal ordering based off the magnitude of the estimates
+    if(random(2)<1&(num_RR+num_lv_c)>0){
+    // for (int k = 0; k < (num_lv_c + num_RR); k++) {
+    //   for (int q = 0; q < (num_lv_c + num_RR); q++) {
+    //     if(q>k){
+    //       b_lv(k,q) = 0;
+    //     }
+    //   }
+    // }
+
+    }
+    if(pivot==1){
+      matrix<Type> b_lv_old = b_lv;
+      if((num_RR+num_lv_c)>0){//start at 2nd LV because first LV is unconstrained
+        matrix <Type> RidxM(dimPerm,num_lv_c+num_RR);
+        for (int q=1; q<(num_RR+num_lv_c); q++){
+          vector<Type> Ridx(Klv-q+1);
+          for (int k = 0; k < (Klv-q+1); k++) {
+            int r = 0, s = 0;
+            for (int j = (q-1); j < Klv; j++) {
+              if (j != (k+q-1))
+                r += 1*(fabs(b_lv(j,q)) > fabs(b_lv(k+q-1,q)));
+
+              if (j>(k+q))
+                s += 1*(b_lv(j,q) == b_lv(k+q-1,q));
+            }
+
+            // Use formula to obtain rank ordered increasingly (smallest value is ranked highest)
+            Ridx(k) = r+s;//+q?
+          }
+          vector<Type> Ridx_old = Ridx;
+          for (int i=0; i<Ridx_old.size(); i++){
+            Ridx(CppAD::Integer(Ridx_old(i))) =  i+q-1;
+            RidxM(CppAD::Integer(Ridx_old(i))+q-1,q) = i+q-1;
+          }
+
+          // REPORT(Ridx);
+          // Perm.fill(0.0);//reset the matrix, we swap rows 1 column at a time
+          // Perm.diagonal().array() = 1;
+          // //want to get largest values in b_lv on the diagonal..
+          // vector <Type> vec = Perm.col(CppAD::Integer(Ridx(0)));
+          // vector <Type> vec2 = Perm.col(q-1);
+          // Perm.col(CppAD::Integer(Ridx(0))) = vec2;
+          // Perm.col(q-1) = vec;
+          // b_lv = Perm*b_lv;//don't really need transpose with current permutation constraint
+          // 
+          // //something going wrong here?
+          // Perm2.col(CppAD::Integer(Ridx(0))) = vec2;
+          // Perm2.col(q-1) = vec;
+        }
+        for (int q=1; q<(num_RR+num_lv_c); q++){
+          
+        for (int q2=0; q2<(q-1); q2++){
+         b_lv(Klv-1,1) = 0;// b_lv(CppAD::Integer(RidxM(Klv-1)),q) = 0;//set q-1 smallest coefficients to zero!, was Klv-q2 instead of Klv. just triyng.
+        }
+        }
+        REPORT(RidxM);
+      }
+
+      REPORT(Perm2);
+      REPORT(b_lv);
+      REPORT(b_lv_old);
+      // REPORT(Ridx);
+      
+      
+      /////////////////////////7
+    }else if(pivot == 2){
+      //column pivoting
+      matrix <Type> beta(Klv,p);
+      beta.fill(0.0);
+      if(num_lv_c>0){
+        beta += b_lv.leftCols(num_lv_c)*newlam.topRows(num_lv_c);
+      }
+      if(num_RR>0){
+        beta += b_lv.rightCols(num_RR)*RRgamma;
+      }
+      
+      vector<Type> norms2 = (beta.cwiseAbs()).colwise().squaredNorm();
+      // for (int k=0; k<p; k++){
+      //   //option 1 based on b_lv
+      //   //option 2 based on b_lv*theta (now)
+      //   norms2(k) = pow(((beta.col(k)).array().square()).sum(),0.5);
+      // }
+      vector<int> Ridx2(p);
+      // Rank Vector
+      // Sweep through all elements in A for each
+      // element count the number of less than and
+      // equal elements separately in r and s.
+      for (int k = 0; k < p; k++) {
+        int r = 1, s = 1;
+        for (int j = 0; j < p; j++) {
+          if (j != k)
+            r += 1*(norms2(j) < norms2(k));
+          
+          if (j != k)
+            s += 1*(norms2(j) == norms2(k));
+        }
+        
+        // Use formula to obtain rank
+        Ridx2(k) = p-int (r + (s - 1) / 2);
+
+        //Ridx2(k) = int (r + (s - 1) / 2) -1;
+        
+      }
+      //construct column permutation matrix
+      if((num_RR+num_lv_c)>1){
+        for (int q=0; q<(num_RR+num_lv_c-1); q++){
+          Perm(Ridx2(p-q-1),q) = Perm(q,Ridx2(p-q-1)) = 1;
+          Perm(Ridx2(p-q-1),Ridx2(p-q-1)) = Perm(q,q) = 0;
+        }  
+      }
+      //transpose to get it on the right side, inverse = transpose
+      
+      matrix<Type> RRgamma_old = RRgamma;
+      if(num_lv_c>0){
+        newlam.topRows(num_lv_c) = newlam.topRows(num_lv_c)*Perm.transpose();
+      }
+      if(num_RR>0){
+        RRgamma = RRgamma_old*Perm.transpose();
+      }
+      REPORT(Perm);
+      REPORT(RRgamma);
+      REPORT(RRgamma_old);
+      REPORT(newlam);
+      REPORT(Ridx2);
+    }
+  }
+  
   matrix<Type> mu(n,p);
   mu.fill(0.0);
   
@@ -1626,4 +1775,3 @@ Type objective_function<Type>::operator() ()
   
   return nll.sum();
 }
-
