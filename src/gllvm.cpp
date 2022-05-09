@@ -295,19 +295,19 @@ Type objective_function<Type>::operator() ()
             RidxM(CppAD::Integer(Ridx_old(i))+q-1,q) = i+q-1;
           }
 
-          // REPORT(Ridx);
-          // Perm.fill(0.0);//reset the matrix, we swap rows 1 column at a time
-          // Perm.diagonal().array() = 1;
-          // //want to get largest values in b_lv on the diagonal..
-          // vector <Type> vec = Perm.col(CppAD::Integer(Ridx(0)));
-          // vector <Type> vec2 = Perm.col(q-1);
-          // Perm.col(CppAD::Integer(Ridx(0))) = vec2;
-          // Perm.col(q-1) = vec;
-          // b_lv = Perm*b_lv;//don't really need transpose with current permutation constraint
-          // 
-          // //something going wrong here?
-          // Perm2.col(CppAD::Integer(Ridx(0))) = vec2;
-          // Perm2.col(q-1) = vec;
+          REPORT(Ridx);
+          Perm.fill(0.0);//reset the matrix, we swap rows 1 column at a time
+          Perm.diagonal().array() = 1;
+          //want to get largest values in b_lv on the diagonal..
+          vector <Type> vec = Perm.col(CppAD::Integer(Ridx(0)));
+          vector <Type> vec2 = Perm.col(q-1);
+          Perm.col(CppAD::Integer(Ridx(0))) = vec2;
+          Perm.col(q-1) = vec;
+          b_lv = Perm*b_lv;//don't really need transpose with current permutation constraint
+
+          //something going wrong here?
+          Perm2.col(CppAD::Integer(Ridx(0))) = vec2;
+          Perm2.col(q-1) = vec;
         }
         for (int q=1; q<(num_RR+num_lv_c); q++){
           
@@ -327,63 +327,106 @@ Type objective_function<Type>::operator() ()
       /////////////////////////7
     }else if(pivot == 2){
       //column pivoting
-      matrix <Type> beta(Klv,p);
-      beta.fill(0.0);
-      if(num_lv_c>0){
-        beta += b_lv.leftCols(num_lv_c)*newlam.topRows(num_lv_c);
-      }
-      if(num_RR>0){
-        beta += b_lv.rightCols(num_RR)*RRgamma;
-      }
+      // matrix <Type> beta(Klv,p);
+      // beta.fill(0.0);
+      // if(num_lv_c>0){
+      //   beta += b_lv.leftCols(num_lv_c)*newlam.topRows(num_lv_c);
+      // }
+      // if(num_RR>0){
+      //   beta += b_lv.rightCols(num_RR)*RRgamma;
+      // }
       
-      vector<Type> norms2 = (beta.cwiseAbs()).colwise().squaredNorm();
+      // vector<Type> norms2 = (beta.cwiseAbs()).colwise().squaredNorm();
       // for (int k=0; k<p; k++){
       //   //option 1 based on b_lv
       //   //option 2 based on b_lv*theta (now)
       //   norms2(k) = pow(((beta.col(k)).array().square()).sum(),0.5);
       // }
-      vector<int> Ridx2(p);
+      // vector<int> Ridx2(p);
       // Rank Vector
       // Sweep through all elements in A for each
       // element count the number of less than and
       // equal elements separately in r and s.
-      for (int k = 0; k < p; k++) {
-        int r = 1, s = 1;
-        for (int j = 0; j < p; j++) {
-          if (j != k)
-            r += 1*(norms2(j) < norms2(k));
-          
-          if (j != k)
-            s += 1*(norms2(j) == norms2(k));
-        }
-        
-        // Use formula to obtain rank
-        Ridx2(k) = p-int (r + (s - 1) / 2);
-
-        //Ridx2(k) = int (r + (s - 1) / 2) -1;
-        
-      }
-      //construct column permutation matrix
-      if((num_RR+num_lv_c)>1){
-        for (int q=0; q<(num_RR+num_lv_c-1); q++){
-          Perm(Ridx2(p-q-1),q) = Perm(q,Ridx2(p-q-1)) = 1;
-          Perm(Ridx2(p-q-1),Ridx2(p-q-1)) = Perm(q,q) = 0;
-        }  
-      }
-      //transpose to get it on the right side, inverse = transpose
+      // for (int k = 0; k < p; k++) {
+      //   int r = 1, s = 1;
+      //   for (int j = 0; j < p; j++) {
+      //     if (j != k)
+      //       r += 1*(norms2(j) < norms2(k));
+      //     
+      //     if (j != k)
+      //       s += 1*(norms2(j) == norms2(k));
+      //   }
+      //   
+      //   // Use formula to obtain rank
+      //   Ridx2(k) = p-int (r + (s - 1) / 2);
+      // 
+      //   //Ridx2(k) = int (r + (s - 1) / 2) -1;
+      //   
+      // }
+      // //construct column permutation matrix
+      // if((num_RR+num_lv_c)>1){
+      //   for (int q=0; q<(num_RR+num_lv_c-1); q++){
+      //     Perm(Ridx2(p-q-1),q) = Perm(q,Ridx2(p-q-1)) = 1;
+      //     Perm(Ridx2(p-q-1),Ridx2(p-q-1)) = Perm(q,q) = 0;
+      //   }  
+      // }
+      // //transpose to get it on the right side, inverse = transpose
+      // 
+      // matrix<Type> RRgamma_old = RRgamma;
+      // if(num_lv_c>0){
+      //   newlam.topRows(num_lv_c) = newlam.topRows(num_lv_c)*Perm.transpose();
+      // }
+      // if(num_RR>0){
+      //   RRgamma = RRgamma_old*Perm.transpose();
+      // }
+      // REPORT(Perm);
+      // REPORT(RRgamma);
+      // REPORT(RRgamma_old);
+      // REPORT(newlam);
+      // REPORT(Ridx2);
       
       matrix<Type> RRgamma_old = RRgamma;
-      if(num_lv_c>0){
-        newlam.topRows(num_lv_c) = newlam.topRows(num_lv_c)*Perm.transpose();
+      if((num_RR+num_lv_c)>0){//start at 2nd LV because first LV is unconstrained
+        matrix <Type> RidxM(p,num_lv_c+num_RR);
+        for (int q=1; q<(num_RR+num_lv_c); q++){
+          vector<Type> Ridx(p-q+1);
+          for (int k = 0; k < (p-q+1); k++) {
+            int r = 0, s = 0;
+            for (int j = (q-1); j < p; j++) {
+              if (j != (k+q-1))
+                r += 1*(fabs(RRgamma(q,j)) > fabs(RRgamma(q,k+q-1)));
+              
+              if (j>(k+q))
+                s += 1*(RRgamma(q,j) == RRgamma(q,k+q-1));
+            }
+            
+            // Use formula to obtain rank ordered increasingly (smallest value is ranked highest)
+            Ridx(k) = r+s;//+q?
+          }
+          vector<Type> Ridx_old = Ridx;
+          for (int i=0; i<Ridx_old.size(); i++){
+            Ridx(CppAD::Integer(Ridx_old(i))) =  i+q-1;
+            RidxM(CppAD::Integer(Ridx_old(i))+q-1,q) = i+q-1;
+          }
+          
+          REPORT(Ridx);
+          Perm.fill(0.0);//reset the matrix, we swap rows 1 column at a time
+          Perm.diagonal().array() = 1;
+          //want to get largest values in b_lv on the diagonal..
+          vector <Type> vec = Perm.col(CppAD::Integer(Ridx(0)));
+          vector <Type> vec2 = Perm.col(q-1);
+          Perm.col(CppAD::Integer(Ridx(0))) = vec2;
+          Perm.col(q-1) = vec;
+          RRgamma = RRgamma*Perm;//don't really need transpose with current permutation constraint
+          
+          //something going wrong here?
+          Perm2.col(CppAD::Integer(Ridx(0))) = vec2;
+          Perm2.col(q-1) = vec;
+        }
+        REPORT(RRgamma);
+        REPORT(Perm2)
+        REPORT(RidxM);
       }
-      if(num_RR>0){
-        RRgamma = RRgamma_old*Perm.transpose();
-      }
-      REPORT(Perm);
-      REPORT(RRgamma);
-      REPORT(RRgamma_old);
-      REPORT(newlam);
-      REPORT(Ridx2);
     }
   }
   
