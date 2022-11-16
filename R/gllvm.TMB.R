@@ -306,7 +306,13 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, family = "poisso
           is.null(X) == is.null(start.params$X) &&
           (row.eff == start.params$row.eff)) {
         if(class(start.params)[2]=="gllvm.quadratic" && quadratic != FALSE){
-          lambda2 <- start.params$params$theta[,-c(1:(start.params$num.lv+start.params$num.lv.c+start.params$num.RR)),drop=F]
+          if(start.params$quadratic=="LV"&quadratic=="LV"){
+            lambda2 <- start.params$params$theta[1,-c(1:(start.params$num.lv+start.params$num.lv.c+start.params$num.RR)),drop=F]  
+          }else if(isTRUE(start.params$quadratic)&quadratic=="LV"){
+            lambda2 <- matrix(apply(start.params$params$theta[,-c(1:(start.params$num.lv+start.params$num.lv.c+start.params$num.RR)),drop=F],2,mean),ncol=num.lv+num.lv.c+num.RR,nrow=1)
+          }else{
+            lambda2 <- start.params$params$theta[,-c(1:(start.params$num.lv+start.params$num.lv.c+start.params$num.RR)),drop=F]  
+          }
         }else if(class(start.params)[1]=="gllvm" && quadratic != FALSE){
           if(start.struc=="LV"|quadratic=="LV"){
             lambda2 <- matrix(quad.start, ncol = num.lv+num.lv.c+num.RR, nrow = 1)  
