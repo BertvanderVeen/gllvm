@@ -1274,6 +1274,7 @@ Type objective_function<Type>::operator() ()
   }
   
   matrix <Type> e_eta;
+  vector< matrix<Type>> D(p);
   
   if(nlvr>0){
     matrix<Type> b_lv2(x_lv.cols(),nlvr);
@@ -1320,7 +1321,6 @@ Type objective_function<Type>::operator() ()
     
     if(((quadratic>0) && (nlvr>0)) || ((quadratic>0) && (num_RR>0))){
       
-      vector< matrix<Type>> D(p);
       
       //quadratic coefficients for ordination
       //if random rows, add quadratic coefficients for num_RR to D otherwise
@@ -1451,7 +1451,7 @@ Type objective_function<Type>::operator() ()
         //quadratic model approximation
         
         //Poisson, NB, gamma, exponential
-        if((family==0)||(family==1)||(family==4)||(family==8)){
+        if(((family==0)||(family==1)||(family==4)||(family==8)) && (method == 0)){
           e_eta = matrix <Type> (n,p);
           
           int sign;
@@ -1503,7 +1503,7 @@ Type objective_function<Type>::operator() ()
           }
         }
         // Binomial, Gaussian, Ordinal
-        if((family==2)||(family==3)||(family==7)){
+        if(((family==2)||(family==3)||(family==7))  && (method == 0)){
           matrix <Type> Acov(nlvr,nlvr);
           for (int i=0; i<n; i++) {
             Acov = A(i)*A(i).transpose();
@@ -1520,7 +1520,8 @@ Type objective_function<Type>::operator() ()
         
         for (int i=0; i<n; i++) {
           for (int j=0; j<p;j++){
-            eta(i,j) += lam(i,j) - (u.row(i)*D(j)*u.row(i).transpose()).sum() - (D(j)*A(i)*A(i).transpose()).trace();
+            eta(i,j) += lam(i,j) - (u.row(i)*D(j)*u.row(i).transpose()).sum();
+            if(method == 0)eta(i,j) -= (D(j)*A(i)*A(i).transpose()).trace();//only for VA not EVA
             if((num_lv_c>0) && (random(2)<1)){
               eta(i,j) -= 2*u.row(i)*D(j)*(x_lv.row(i)*b_lv2).transpose();
             }
@@ -1566,7 +1567,13 @@ Type objective_function<Type>::operator() ()
     for (int i=0; i<n; i++) {
       for (int j=0; j<p;j++){
         nll -= dnbinom_robust(y(i,j), eta(i,j), 2*eta(i,j) - lg_phi(j), 1);
+        if((quadratic < 1) || ( ((quadratic > 0) && ((num_lv+num_lv_c)<1) && ((num_RR*(1-random(2))) >0)) )){
         nll += (((iphi(j)+y(i,j)) / (iphi(j)+exp(eta(i,j)))) * exp(eta(i,j)) - ((iphi(j)+y(i,j))*pow(iphi(j)+exp(eta(i,j)),-2))*pow(exp(eta(i,j)),2)) * cQ(i,j);
+        }else{
+          nll += 0.5*((iphi(j)+y(i,j)) / (iphi(j)+exp(eta(i,j)))) * exp(eta(i,j))*((newlam.col(j).transpose()- 2*u.row(i)*D(j))*A(i)*A(i).transpose()*(newlam.col(j)- 2*D(j)*u.row(i).transpose())).value(); //first term
+          nll -= 0.5*(((iphi(j)+y(i,j))*pow(iphi(j)+exp(eta(i,j)),-2))*pow(exp(eta(i,j)),2))*((newlam.col(j).transpose()- 2*u.row(i)*D(j))*A(i)*A(i).transpose()*(newlam.col(j)- 2*D(j)*u.row(i).transpose())).value(); //second term
+          nll -= (((iphi(j)+y(i,j)) / (iphi(j)+exp(eta(i,j))))*exp(eta(i,j))-y(i,j))*(D(j)*A(i)*A(i).transpose()).trace();//third and fourth terms
+        }
         
         // nll += gllvm::nb_Hess(y(i,j), eta(i,j), iphi(j)) * cQ(i,j);
         // nll -= lgamma(y(i,j)+iphi(j)) - lgamma(iphi(j)) - lgamma(y(i,j)+1) + y(i,j)*eta(i,j) + iphi(j)*log(iphi(j))-(y(i,j)+iphi(j))*log(exp(eta(i,j))+iphi(j));
