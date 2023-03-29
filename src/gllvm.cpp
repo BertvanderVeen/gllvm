@@ -3,6 +3,42 @@
 #include<math.h>
 #include "distrib.h"
 
+template<class Type>
+struct lldn {
+  Type y;
+  Type lg_phi;
+  Type eta;
+  vector <Type> gamma;
+  vector <Type> d;
+  int lv;
+  lldn(Type y_,
+       Type lg_phi_,
+       Type eta_,
+       vector<Type> gamma_,
+       vector <Type> d_,
+       int lv_) :
+    y(y_), lg_phi(lg_phi_), eta(eta_), gamma(gamma_), d(d_), lv(lv_){}
+  template <typename T>
+  T operator() (vector<T> u) {  // Evaluate function
+    T mu = T(eta);// + u*gamma;//- pow(u,2)*T(d.transpose());
+    for(int q=0; q<lv; q++){
+      mu += u(q)*T(gamma(q)) - u(q)*u(q)*T(d(q));
+    }
+    T ll = dnbinom_robust(T(y), mu, 2*mu - T(lg_phi), 1);
+    return ll;
+  }
+};
+// template<class Type>
+// struct lldn {
+//   Type a;
+//   Type b;
+//   template <class T>
+//   T operator()(vector<T> x) {  // Evaluate function
+//     T c = exp(a) * x[0] + exp(b) * x[1];
+//     return c;
+//   }
+// };
+
 //--------------------------------------------------------
 //GLLVM
 //Authors: Jenni Niku, Bert van der Veen, Pekka Korhonen
@@ -1272,10 +1308,13 @@ Type objective_function<Type>::operator() ()
       
     }
   }
-  
+  matrix<Type> eta2 = eta;
   matrix <Type> e_eta;
   vector< matrix<Type>> D(p);
-  
+  for(int j=0; j<p; j++){
+    D(j).resize(nlvr,nlvr);
+    D(j).setZero();
+  }
   if(nlvr>0){
     matrix<Type> b_lv2(x_lv.cols(),nlvr);
     b_lv2.setZero();
@@ -1305,7 +1344,7 @@ Type objective_function<Type>::operator() ()
       }
     }
     lam = u*newlam;
-    
+  
     // Update cQ for non quadratic latent variable model and
     // also takes this route if there are quadratic constrained LVs with random row-effect
     if((quadratic < 1) || ((nlvr==1) && (random(2)<1) && (num_RR>0) && (quadratic>0))){
@@ -1565,21 +1604,27 @@ Type objective_function<Type>::operator() ()
     
   } else if ((family == 1) && (method>1)) { // NB EVA
     for (int i=0; i<n; i++) {
+      matrix <Type> h(newlam.rows(),newlam.rows());
+      h.fill(0.0);
       for (int j=0; j<p;j++){
         nll -= dnbinom_robust(y(i,j), eta(i,j), 2*eta(i,j) - lg_phi(j), 1);
-        if((quadratic < 1) || ( ((quadratic > 0) && ((num_lv+num_lv_c)<1) && ((num_RR*(1-random(2))) >0)) )){
-        nll += (((iphi(j)+y(i,j)) / (iphi(j)+exp(eta(i,j)))) * exp(eta(i,j)) - ((iphi(j)+y(i,j))*pow(iphi(j)+exp(eta(i,j)),-2))*pow(exp(eta(i,j)),2)) * cQ(i,j);
-        }else{
-          nll += 0.5*((iphi(j)+y(i,j)) / (iphi(j)+exp(eta(i,j)))) * exp(eta(i,j))*((newlam.col(j).transpose()- 2*u.row(i)*D(j))*A(i)*A(i).transpose()*(newlam.col(j)- 2*D(j)*u.row(i).transpose())).value(); //first term
-          nll -= 0.5*(((iphi(j)+y(i,j))*pow(iphi(j)+exp(eta(i,j)),-2))*pow(exp(eta(i,j)),2))*((newlam.col(j).transpose()- 2*u.row(i)*D(j))*A(i)*A(i).transpose()*(newlam.col(j)- 2*D(j)*u.row(i).transpose())).value(); //second term
-          nll -= (((iphi(j)+y(i,j)) / (iphi(j)+exp(eta(i,j))))*exp(eta(i,j))-y(i,j))*(D(j)*A(i)*A(i).transpose()).trace();//third and fourth terms
-        }
+        lldn<Type> f(y(i,j), lg_phi(j),  eta2(i,j),vector<Type>(newlam.col(j)), vector<Type>(D(j).diagonal()), newlam.rows());
+        h += autodiff::hessian(f,vector<Type>(u.row(i)));
+        // if((quadratic < 1) || ( ((quadratic > 0) && ((num_lv+num_lv_c)<1) && ((num_RR*(1-random(2))) >0)) )){
+        //   nll += (((iphi(j)+y(i,j)) / (iphi(j)+exp(eta(i,j)))) * exp(eta(i,j)) - ((iphi(j)+y(i,j))*pow(iphi(j)+exp(eta(i,j)),-2))*pow(exp(eta(i,j)),2)) * cQ(i,j);
+        // }else{
+        //   nll += 0.5*((iphi(j)+y(i,j)) / (iphi(j)+exp(eta(i,j)))) * exp(eta(i,j))*((newlam.col(j).transpose()- 2*u.row(i)*D(j))*A(i)*A(i).transpose()*(newlam.col(j)- 2*D(j)*u.row(i).transpose())).value(); //first term
+        //   nll -= 0.5*(((iphi(j)+y(i,j))*pow(iphi(j)+exp(eta(i,j)),-2))*pow(exp(eta(i,j)),2))*((newlam.col(j).transpose()- 2*u.row(i)*D(j))*A(i)*A(i).transpose()*(newlam.col(j)- 2*D(j)*u.row(i).transpose())).value(); //second term
+        //   nll -= (((iphi(j)+y(i,j)) / (iphi(j)+exp(eta(i,j))))*exp(eta(i,j))-y(i,j))*(D(j)*A(i)*A(i).transpose()).trace();//third and fourth terms
+        // }
         
         // nll += gllvm::nb_Hess(y(i,j), eta(i,j), iphi(j)) * cQ(i,j);
         // nll -= lgamma(y(i,j)+iphi(j)) - lgamma(iphi(j)) - lgamma(y(i,j)+1) + y(i,j)*eta(i,j) + iphi(j)*log(iphi(j))-(y(i,j)+iphi(j))*log(exp(eta(i,j))+iphi(j));
         // nll -= dnbinom_robust(y(i,j), eta(i,j), 2*eta(i,j) - lg_phi(j), 1);
         // nll += (((iphi(j)+y(i,j)) / (iphi(j)+exp(eta(i,j)))) * exp(eta(i,j)) - ((iphi(j)+y(i,j))*pow(iphi(j)+exp(eta(i,j)),-2))*pow(exp(eta(i,j)),2)) * cQ(i,j);
       }
+      nll -= 0.5*(h*A(i)*A(i).transpose()).trace();
+      
     }
   } else if((family == 2) && (method<1)) {//binomial probit VA
     for (int i=0; i<n; i++) {
