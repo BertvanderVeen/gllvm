@@ -244,6 +244,8 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, family = "poisso
       Power = fit$Power
       ePower = log((Power-1)/(1-(Power-1)))
       if(ePower==0)ePower=ePower-0.01
+    }else{
+      ePower = 0
     }
     ## Set initial values
         sigma <- 1
