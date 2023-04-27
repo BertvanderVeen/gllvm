@@ -11,7 +11,7 @@
 #' @param spp.intercepts option to return species intercepts, defaults to \code{FALSE}
 #' @param row.intercepts option to return row intercepts, defaults to \code{FALSE} 
 #' @param Lvcoefs option to return species scores in the ordination, defaults to \code{FALSE}. Returns species optima for quadratic model.
-#' @param rotate defaults to \code{TRUE}. If \code{TRUE} rotates the output of the latent variables to principal direction, so that it coincides with the ordiplot results. If both unconstrained and constrained latent variables are included, predictor slopes are not rotated.
+#' @param rotate defaults to \code{TRUE}. If \code{TRUE} rotates the output of the latent variables to principal direction, so that it coincides with the default ordiplot results. If both unconstrained and constrained latent variables are included, predictor slopes are not rotated.
 #' @param type to match "type" in \code{\link{ordiplot.gllvm}}
 #' @param ...	 not used.
 #'
