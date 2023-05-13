@@ -18,6 +18,7 @@ Type objective_function<Type>::operator() ()
   DATA_MATRIX(xb); // envs with random slopes
   DATA_ARRAY(dr0); // design matrix for rows, (times, n, nr)
   DATA_MATRIX(offset); //offset matrix
+  DATA_INTEGER(R);
   
   PARAMETER_MATRIX(r0); // site/row effects
   PARAMETER_MATRIX(b); // matrix of species specific intercepts and coefs
@@ -1533,12 +1534,31 @@ Type objective_function<Type>::operator() ()
   if(family==0){//poisson
     //also go here if quadratic constrained model without random slopes
     if((quadratic < 1) || ( ((quadratic > 0) && ((num_lv+num_lv_c)<1) && ((num_RR*(1-random(2))) >0) ))){
+      matrix <Type> z(R,nlvr);
+      
       for (int i=0; i<n; i++) {
-        for (int j=0; j<p;j++){
-          nll -= dpois(y(i,j), exp(eta(i,j)+cQ(i,j)), true)-y(i,j)*cQ(i,j);
+        z.fill(0.0);
+        for (int q=0; q<nlvr; q++) {
+          z.col(q) = rnorm(R,Type(0), Type(1));
         }
-        // nll -= 0.5*(log(Ar(i)) - Ar(i)/pow(sigma,2) - pow(r0(i)/sigma,2))*random(0);
+        z *= A(i);
+        // for (int q=0; q<nlvr; q++) {
+        //   z.col(q).array() += u(i,q);
+        // }
+        z.rowwise() += u.row(i);
+        matrix<Type> eta2 = z*newlam;
+      for (int j=0; j<p;j++){
+          // Type logfy = dpois(y(i,j), exp(eta(i,j)+cQ(i,j)), true)-y(i,j)*cQ(i,j);
+          // Type p = exp(logfy+log(iphi(j)));//iphi(j)*fy;//iphi(j)/(1-iphi(j))*fy;
+          // nll -= p*log(iphi(j))+(1-p)*log(1-iphi(j))+(1-p)*logfy+(1-p)*log(1-p)+p*log(p);
+          // nll -= (1-p)*dpois(y(i,j), exp(eta(i,j)+cQ(i,j)), true)-y(i,j)*cQ(i,j);
+          
+          eta2.col(j).array() += b(0,j);
+          mu(i,j) = eta2.col(j).array().exp().mean();
+          nll -= y(i,j)*eta(i,j) - mu(i,j)  - lfactorial(y(i,j));
+        }
       }
+      REPORT(mu);
     }else{
       for (int i=0; i<n; i++) {
         for (int j=0; j<p;j++){
@@ -1658,6 +1678,20 @@ Type objective_function<Type>::operator() ()
         }
       }
     }
+   } else if(family==6) {//zero-infl-poisson
+    iphi=iphi/(1+iphi);
+    // for (int j=0; j<p;j++){
+    //   for (int i=0; i<n; i++) {
+    //     Type p;
+    //     Type logfy = dpois(y(i,j), exp(eta(i,j)+cQ(i,j)), true)-y(i,j)*cQ(i,j);
+    //     if(y(i,j)==0){
+    //       p = exp(-eta(i,j)+cQ(i,j));
+    //     }else{
+    //       p = (1-iphi(j))*exp(logfy);
+    //     }
+    //     nll -= p*log(iphi(j)) + (1-p)*log(1-iphi(j))+(1-p)*logfy + (1-p)*log(1-p) + p*log(p);
+    //   }
+    // }
   } else if((family==7) && (zetastruc == 1)){//ordinal
     int ymax =  CppAD::Integer(y.maxCoeff());
     int K = ymax - 1;

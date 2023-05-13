@@ -402,7 +402,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
                   Power = 1.1, seed = NULL, scale.X = TRUE, return.terms = TRUE, gradient.check = FALSE, disp.formula = NULL,
                   control = list(reltol = 1e-10, reltol.c = 1e-8, TMB = TRUE, optimizer = ifelse((num.RR+num.lv.c)==0 | randomB!=FALSE,"optim","alabama"), max.iter = 4000, maxit = 4000, trace = FALSE, optim.method = NULL), 
                   control.va = list(Lambda.struc = "unstructured", Ab.struct = "unstructured", Ar.struc="unstructured", diag.iter = 1, Ab.diag.iter=0, Lambda.start = c(0.3, 0.3, 0.3), NN = 3),
-                  control.start = list(starting.val = "res", n.init = 1, n.init.max = 10, jitter.var = 0, start.fit = NULL, start.lvs = NULL, randomX.start = "zero", quad.start=0.01, start.struc = "LV", scalmax = 10, MaternKappa=1.5), setMap=NULL, ...
+                  control.start = list(starting.val = "res", n.init = 1, n.init.max = 10, jitter.var = 0, start.fit = NULL, start.lvs = NULL, randomX.start = "zero", quad.start=0.01, start.struc = "LV", scalmax = 10, MaternKappa=1.5), setMap=NULL, R = 100, ...
                   ) {
   # Dthreshold=0,
   if(!is.null(lvCor)) warning("'lvCor' is under development, so all properties may not work properly.")
@@ -1015,10 +1015,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
       cat("Laplace's method is not implemented without TMB, so 'TMB = TRUE' is used instead. \n")
       TMB = TRUE
     }
-    if ((method %in% c("VA", "EVA")) && (family == "ZIP")) {
-      cat("VA method cannot handle", family, " family, so LA method is used instead. \n")
-      method <- "LA"
-    }
+
     if (quadratic != FALSE && family %in% c("tweedie", "beta")){
       stop("The quadratic model is not implemented for ", family, " family yet. \n")
     }
@@ -1211,7 +1208,8 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
             dr=dr, rstruc =rstruc, cstruc = cstruc, dist =dist, corWithin = corWithin, NN=NN, 
             scalmax = scalmax, MaternKappa = MaternKappa,
             setMap=setMap, #Dthreshold=Dthreshold,
-            disp.group = disp.group
+            disp.group = disp.group,
+            R = R
         )
         if(is.null(formula)) {
           out$formula <- fitg$formula
