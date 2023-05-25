@@ -142,8 +142,6 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, family = "poisso
   
   if (!is.numeric(y))
     stop( "y must a numeric. If ordinal data, please convert to numeric with lowest level equal to 1. Thanks")
-  if ((family %in% c("ZIP")) && (method %in% c("VA", "EVA"))) #"tweedie", 
-    stop("family=\"", family, "\" : family not implemented with VA method, change the method to 'LA'")
   if (is.null(rownames(y)))
     rownames(y) <- paste("Row", 1:n, sep = "")
   if (is.null(colnames(y)))
@@ -633,6 +631,7 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, family = "poisso
       if(family == "gaussian") {familyn=3}
       if(family == "gamma") {familyn=4}
       if(family == "tweedie"){ familyn=5; extra[1]=Power}
+      if(family == "ZIP")familyn<-6;
       if(family == "ordinal") {familyn=7}
       if(family == "exponential") {familyn=8}
       if(family == "beta"){ 
@@ -1038,8 +1037,12 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, family = "poisso
 #### Extract estimated values
       
       param<-objr$env$last.par.best
-      if(family %in% c("negative.binomial", "tweedie", "gaussian", "gamma", "beta", "betaH")) {
+      if(family %in% c("negative.binomial", "tweedie", "gaussian", "gamma", "beta", "betaH","ZIP")) {
         phis <- exp(param[names(param)=="lg_phi"])[disp.group]
+        if(family=="ZIP") {
+          lp0 <- param[names(param)=="lg_phi"][disp.group]; out$lp0 <- lp0
+          phis <- exp(lp0)/(1+exp(lp0));
+        }
       }
       if(family == "ordinal"){
         zetas <- param[names(param)=="zeta"]
@@ -1616,7 +1619,7 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, family = "poisso
     if(n.i>1){
       if(!is.null(objrFinal)){
         gr1 <- objrFinal$gr()
-        gr1 <- gr1/length(gr1)
+        gr1 <- as.matrix(gr1/length(gr1))
         norm.gr1 <- norm(gr1)
       }else{
         gr1 <- NaN
@@ -1624,7 +1627,7 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, formula = NULL, family = "poisso
       }
      
       gr2 <- objr$gr()
-      gr2 <- gr2/length(gr2)
+      gr2 <- as.matrix(gr2/length(gr2))
       norm.gr2 <- norm(gr2)
       n.i.i <- n.i.i +1
       grad.test1 <- all.equal(norm.gr1, norm.gr2, tolerance = 1, scale = 1)#check if gradients are similar when accepting on log-likelihood

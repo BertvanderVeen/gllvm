@@ -18,7 +18,7 @@ Type objective_function<Type>::operator() ()
   DATA_MATRIX(xb); // envs with random slopes
   DATA_ARRAY(dr0); // design matrix for rows, (times, n, nr)
   DATA_MATRIX(offset); //offset matrix
-  
+
   PARAMETER_MATRIX(r0); // site/row effects
   PARAMETER_MATRIX(b); // matrix of species specific intercepts and coefs
   PARAMETER_MATRIX(bH); // matrix of species specific intercepts and coefs for beta hurdle model
@@ -1451,12 +1451,12 @@ Type objective_function<Type>::operator() ()
         //quadratic model approximation
         
         //Poisson, NB, gamma, exponential
-        if((family==0)||(family==1)||(family==4)||(family==8)){
+        if((family==0)||(family==1)||(family==4)||(family==6)||(family==8)){
           e_eta = matrix <Type> (n,p);
           
           int sign;
           //sign controls whether it's Poisson or other
-          if((family>0)){
+          if((family>0)||(family==6)){
             sign = 1;
           }else{
             sign = -1;
@@ -1650,7 +1650,40 @@ Type objective_function<Type>::operator() ()
         }
       }
     }
-  } else if((family==7) && (zetastruc == 1)){//ordinal
+  }else if(family==6){ 
+    iphi = iphi/(1+iphi);
+    matrix<Type> pva(n,p);
+    if((quadratic < 1) || ( ((quadratic > 0) && ((num_lv+num_lv_c)<1) && ((num_RR*(1-random(2))) >0) ))){
+    for (int j=0; j<p;j++){
+      for (int i=0; i<n; i++) {
+        pva(i,j) = ((1-iphi(j))*exp(y(i,j)*eta(i,j)-exp(eta(i,j)+cQ(i,j))-lfactorial(y(i,j))))/((1-iphi(j))*exp(y(i,j)*eta(i,j)-exp(eta(i,j)+cQ(i,j))-lfactorial(y(i,j)))+iphi(j));
+        if(y(i,j)>0){
+          nll -= log(1-iphi(j))+y(i,j)*eta(i,j)-exp(eta(i,j)+cQ(i,j))-lfactorial(y(i,j));
+        }else{
+          nll -= (1-pva(i,j))*log(iphi(j))+pva(i,j)*log(1-iphi(j))+pva(i,j)*(-exp(eta(i,j)+cQ(i,j)));
+          nll -= -pva(i,j)*log(pva(i,j))-(1-pva(i,j))*log(1-pva(i,j));
+        }
+    }
+    }
+    }else{
+      for (int j=0; j<p;j++){
+        for (int i=0; i<n; i++) {
+          pva(i,j) = ((1-iphi(j))*exp(y(i,j)*eta(i,j)-e_eta(i,j)-lfactorial(y(i,j))))/((1-iphi(j))*exp(y(i,j)*eta(i,j)-e_eta(i,j)-lfactorial(y(i,j)))+iphi(j));
+          if(y(i,j)>0){
+            nll -= log(1-iphi(j))+y(i,j)*eta(i,j)-e_eta(i,j)-lfactorial(y(i,j));
+          }else{
+            nll -= (1-pva(i,j))*log(iphi(j))+pva(i,j)*log(1-iphi(j))+pva(i,j)*(-e_eta(i,j));
+            nll -= -pva(i,j)*log(pva(i,j))-(1-pva(i,j))*log(1-pva(i,j));
+          }
+        }
+      }
+      REPORT(e_eta);
+      REPORT(pva);
+      REPORT(eta);
+      REPORT(iphi);
+        
+    }
+  }else if((family==7) && (zetastruc == 1)){//ordinal
     int ymax =  CppAD::Integer(y.maxCoeff());
     int K = ymax - 1;
     

@@ -405,6 +405,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
                   control.start = list(starting.val = "res", n.init = 1, n.init.max = 10, jitter.var = 0, start.fit = NULL, start.lvs = NULL, randomX.start = "zero", quad.start=0.01, start.struc = "LV", scalmax = 10, MaternKappa=1.5), setMap=NULL, ...
                   ) {
   # Dthreshold=0,
+  if(!method%in%c("LA","VA","EVA"))stop("Selected method is not supported.")
   if(!is.null(lvCor)) warning("'lvCor' is under development, so all properties may not work properly.")
     #change default behavior of num.lv.
     #if num.lv.c>0, num.lv defaults to 0 if it is 0. Otherwise, it defaults to 2
@@ -1012,10 +1013,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
       cat("Laplace's method is not implemented without TMB, so 'TMB = TRUE' is used instead. \n")
       TMB = TRUE
     }
-    if ((method %in% c("VA", "EVA")) && (family == "ZIP")) {
-      cat("VA method cannot handle", family, " family, so LA method is used instead. \n")
-      method <- "LA"
-    }
+    
     if (quadratic != FALSE && family %in% c("tweedie", "beta")){
       stop("The quadratic model is not implemented for ", family, " family yet. \n")
     }
