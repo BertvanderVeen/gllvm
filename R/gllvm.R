@@ -666,23 +666,34 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
     }
     
     # check if formula includes smooths
+    smooth.formula <- NULL; smooth.pen <- matrix(0)
     if(anySmooths(formula)){
+      if(!is.null(TR))stop("Smooths not yet implemented for traits.")
+      
       # isolate the smooths
       smooth.formula <- onlySmooths(formula)
       # construct smooths
       smooths <- formula2smooth(smooth.formula)
       # get smooths' stuff
-      smoothDat <- getSmoothDat(smooths, X)
+      smoothDat <- getSmoothDat(smooths, data.frame(X))
       # add fixed effect terms to formula and X (need names)
-      
+      formula <- update(formula, as.formula(paste0("~.+", paste0(colnames(smoothDat$fixd), collapse = "+"))))
       # smooth2random in formula
-      formula <- smooth2random(formula)
-      # 
-      # add grouping variables to "studyDesign"
+      formula <- smoothFormula2random(formula, smoothDat)
+      # add "grouping variables" to "studyDesign"
+      smooth.facs <- data.frame(replicate(length(labels(terms(smooth.formula))), rep(1, nrow(X))))
+      colnames(smooth.facs) <- make.names(labels(smooths))
+      if(is.null(studyDesign)){
+        studyDesign <- cbind(smooth.facs, smoothDat$rand)
+      }else{
+        studyDesign = cbind(studyDesign, smooth.facs, smoothDat$rand)
+      }
+      # add fixed effects smooth terms to X
+      X <- cbind(X, smoothDat$fixd)
       
-      #and extract penalty matrices
-      col.eff.formula <- reformulate(sprintf("(%s)", sapply(findbars1(formula), deparse1)))# take out fixed effects
+      smooth.pen <- as.matrix(Matrix::bdiag(smoothDat$pens))
     }
+    
     # separate species random effects
     if(length(X)>0 & length(studyDesign)>0){
       X.col.eff <- cbind(X,studyDesign)
@@ -962,6 +973,15 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
         spdr <- Matrix::t(RElist$Zt)
         cs <- RElist$cs
         # colnames(spdr) <- rep(names(RElist$nms),RElist$nms)
+        if(inherits(smooth.formula, "formula")){ # ensures terms are equally penalized
+          for(i in make.names(labels(terms(smooth.formula)))){
+            colnames(spdr)[grep(i, rep(names(RElist$nl),RElist$nl))] <- i
+          }
+          pens.new <- matrix(0, nrow = ncol(spdr), ncol = ncol(spdr))
+          # diag(pens.new) <- 1
+          pens.new[colnames(spdr)%in%make.names(labels(terms(smooth.formula))), colnames(spdr)%in%make.names(labels(terms(smooth.formula)))] <- solve(smooth.pen)
+          smooth.pen <- pens.new
+        }
       }
     }
 
@@ -1228,7 +1248,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
 
 
     out <- list( y = y, X = X, lv.X = lv.X, TR = TR, data = datayx, num.lv = num.lv, num.lv.c = num.lv.c, num.RR = num.RR, num.lvcor =num.lv.cor, lv.formula = lv.formula, lvCor = lvCor, formula = formula,
-        method = method, family = family, row.eff = row.eff, col.eff = list(col.eff = col.eff, col.eff.formula = col.eff.formula, spdr = spdr, Ab.struct = Ab.struct),  corP=list(cstruc = cstruc, cstruclv = cstruclv, corWithin = corWithin, corWithinLV = corWithinLV, Astruc=0), dist=dist, distLV = distLV, randomX = randomX, n.init = n.init,
+        method = method, family = family, row.eff = row.eff, col.eff = list(col.eff = col.eff, col.eff.formula = col.eff.formula, spdr = spdr, Ab.struct = Ab.struct, smooth.formula = smooth.formula),  corP=list(cstruc = cstruc, cstruclv = cstruclv, corWithin = corWithin, corWithinLV = corWithinLV, Astruc=0), dist=dist, distLV = distLV, randomX = randomX, n.init = n.init,
         sd = FALSE, Lambda.struc = Lambda.struc, TMB = TMB, beta0com = beta0com, optim.method=optim.method, disp.group = disp.group, NN=NN, Ntrials = Ntrials, quadratic = quadratic, randomB = randomB)
     if(return.terms) {out$terms = term} #else {terms <- }
 
@@ -1376,12 +1396,21 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
           out$formula <- fitg$formula
           out$X <- fitg$X
         }
-      if(col.eff == "random"){
-        if(!is.null(colMat)){
-          out$col.eff$colMat <- fitg$colMat
+        
+        if(col.eff == "random"){
+          if(!is.null(colMat)){
+            out$col.eff$colMat <- fitg$colMat
+          }
+          out$col.eff$nsp <- fitg$nsp
+          if(inherits(smooth.formula, "formula")){
+            out$col.eff$smooth.formula <- smooth.formula
+            out$col.eff$smooth.X <- smoothDat
+            colnames(out$col.eff$spdr)[colnames(out$col.eff$spdr)%in%make.names(labels(terms(smooth.formula)))] <- colnames(smoothDat$rand)
+            row.names(fitg$params$Br)[row.names(fitg$params$Br)%in%make.names(labels(terms(smooth.formula)))] <- colnames(smoothDat$rand)
+          }else{
+            out$col.eff$smooth.formula <- NULL
+          }
         }
-        out$col.eff$nsp <- fitg$nsp
-      }
 }
       out$disp.group <- disp.group
       out$seed <- fitg$seed

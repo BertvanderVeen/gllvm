@@ -261,22 +261,19 @@ nobars1_ <- function (term)
 # smooth formula functions
 anySmooths <- function (formula) 
 {
-  if(length(formula)==3){
-    any(grepl("s\\(.\\)",formula[[3]])) 
-  }else{
-    any(grepl("s\\(.\\)",formula[[2]]))
-  }
+  terms<- labels(terms(formula))
+  any(grepl("s\\(.*?\\)",terms) )
 }
 
-smooth2random <- function(formula){
+smoothFormula2random <- function(formula, smoothDat){
   terms<- labels(terms(formula))
   formula.new <- formula
 
-  if(any(grepl("s\\(.\\)",terms))){
+  if(any(grepl("s\\(.*?\\)",terms))){
   if(length(formula)==3){
     #y~
-    for(i in which(grepl("s\\(.\\)",terms))){
-      terms[i] <- paste0("(0+",all.vars(drop.terms(terms(formula),(1:length(terms))[-i])),"|group.s",i,")")
+    for(i in which(grepl("s\\(.*?\\)",terms))){
+      terms[i] <- paste0("(0+",paste0(colnames(smoothDat$rand)[grepl(make.names(terms[i]), colnames(smoothDat$rand))], collapse = "+"),"||",make.names(terms[i]),")")#all.vars(drop.terms(terms(formula),(1:length(terms))[-i]))
     }
     # restore brackets around REs
     barTerms <- findbars1(terms(formula))
@@ -285,8 +282,8 @@ smooth2random <- function(formula){
     }
   }else if(length(formula==2)){
     #~
-    for(i in which(grepl("s\\(.\\)",terms))){
-      terms[i] <- paste0("(0+",all.vars(drop.terms(terms(formula),(1:length(terms))[-i])),"|group.s",i,")")
+    for(i in which(grepl("s\\(.*?\\)",terms))){
+      terms[i] <- paste0("(0+",paste0(colnames(smoothDat$rand)[grepl(make.names(terms[i]), colnames(smoothDat$rand))], collapse = "+"),"||",make.names(terms[i]),")")
     }
     # restore brackets around REs
     barTerms <- findbars1(terms(formula))
@@ -303,16 +300,11 @@ smooth2random <- function(formula){
 
 onlySmooths <- function(formula){
   terms<- labels(terms(formula))
-  reformulate(terms[ which(grepl("s\\(.\\)",terms))])
+  reformulate(terms[ which(grepl("s\\(.*?\\)",terms))])
 }
 
 formula2smooth <- function(smooth.formula){
-  trms <- terms(smooth.formula)
-  # evaluate smooths
-  smooths <- vector("list", length(trms))
-  for(i in 1:(length(trms))){
-    smooths[[i]] <- eval(trms[i][[2]])
-  }
+  smooths <- sapply(labels(terms(smooth.formula)),function(x)eval(parse(text=x)),simplify=FALSE)
   return(smooths)
 }
 getSmoothDat <- function(smooths,X){
@@ -321,16 +313,20 @@ getSmoothDat <- function(smooths,X){
   pMat <- NULL
   # construct smooths
   for(i in 1:length(pens)){
-    cons[[i]] <- mgcv::smoothCon(smooths[[i]],X)[[1]]
+    cons[[i]] <- smoothCon(smooths[[i]],X, absorb.cons = F)[[1]]
   }
   for(i in 1:length(cons)){
     # extract penalty matrices
-    pens[[i]] <- cons[[i]]$S[[1]][1:cons[[i]]$rank,1:cons[[i]]$rank]
+    pens[[i]] <- cons[[i]]$S[[1]][1:cons[[i]]$rank,1:cons[[i]]$rank] #full rank penalties
     # extract penalized and unpenalized components
-    pMat <- cbind(pMat,cons[[i]]$X[,1:cons[[i]]$rank])
-    unMat <- cbind(unMat, cons[[i]]$X[,-c(1:cons[[i]]$rank)])
+    tempMat <- cons[[i]]$X[,-c(1:cons[[i]]$null.space.dim), drop = F]
+    colnames(tempMat) <- make.names(paste0(labels(smooths[i]), 1:ncol(tempMat)+cons[[i]]$null.space.dim))
+    pMat <- cbind(pMat,tempMat)
+    tempMat <- cons[[i]]$X[,1:cons[[i]]$null.space.dim, drop=F]
+    colnames(tempMat) <- make.names(paste0(labels(smooths[i]), 1:ncol(tempMat)))
+    unMat <- cbind(unMat, tempMat)
   }
-  unMat <- unMat[,!apply(unMat,2,function(x)all(x==1))]
-  return(list(pens = pens, pMat = pMat, unMat = unMat))
+  unMat <- unMat[,!apply(unMat,2,function(x)all(x==1)),drop=F] # make sure that there are no intercept terms here
+  return(list(pens = pens, rand = pMat, fixd = unMat))
 }
   
