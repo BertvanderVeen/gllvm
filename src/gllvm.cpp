@@ -926,6 +926,7 @@ Type objective_function<Type>::operator() ()
                 //not sparse
                 nll -= -0.5*((colCorMatIblocks(cb)*SArmP).trace()*(SprI*SArmR*SArmR.transpose()).trace()+(Br.middleCols(sp, colCorMatIblocks(cb).cols())*colCorMatIblocks(cb)*Br.middleCols(sp, colCorMatIblocks(cb).cols()).transpose()).trace());
               }else{
+                  REPORT(colCorMatIblocks);
                 //NN sparse approximation
                 nll -= -0.5*((colCorMatIblocks(cb).sparseView()*SArmP).trace()*(SprI*SArmR*SArmR.transpose()).trace()+(Br.middleCols(sp, colCorMatIblocks(cb).cols())*colCorMatIblocks(cb).sparseView()*Br.middleCols(sp, colCorMatIblocks(cb).cols()).transpose()).trace());
               }
