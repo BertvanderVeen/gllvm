@@ -735,7 +735,7 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, xr = matrix(0), formula = NULL, 
     }
     
     b <- NULL; if(!is.null(X)) b <- matrix(betas, ncol(X), p,byrow = TRUE)
-    extra <- c(0,0,0)
+    extra <- c(0,0,0,0)
     
     optr <- timeo <- NULL
     
@@ -1092,6 +1092,7 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, xr = matrix(0), formula = NULL, 
       extra[1] <- 0
       if(family == "poisson") { familyn <- 0}
       if(family == "negative.binomial") { familyn <- 1}
+      if(family == "negative.binomialPG"){familyn <- 1;extra[4]<-1;family="negative.binomial"}
       if(family == "binomial") { 
         familyn <- 2
         if(link=="probit") extra[1]=1

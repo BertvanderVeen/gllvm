@@ -33,7 +33,7 @@ start_values_gllvm_TMB <- function(y, X = NULL, lv.X = NULL, TR=NULL, xr = matri
   # if(family=="betaH") family = "beta"
   # if(family=="orderedBeta") family = "beta"
   # if(family=="betaH") family="beta"
-  
+  if(family == "negative.binomialPG")family <- "negative.binomial"
   if(!(family %in% c("poisson","negative.binomial","binomial","ordinal","tweedie", "gaussian", "gamma", "exponential", "beta", "betaH", "orderedBeta","ZIP","ZINB")))
     stop("inputed family not allowed...sorry =(")
 

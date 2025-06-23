@@ -469,7 +469,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
       family <- family$family
     }
 
-    if(!(family %in% c("poisson","negative.binomial","binomial","tweedie","ZIP", "ZINB", "gaussian", "ordinal", "gamma", "exponential", "beta", "betaH", "orderedBeta")))
+    if(!(family %in% c("poisson","negative.binomial","negative.binomialPG","binomial","tweedie","ZIP", "ZINB", "gaussian", "ordinal", "gamma", "exponential", "beta", "betaH", "orderedBeta")))
       stop("Selected family not permitted...sorry!")
     
     fill_control = function(x){
@@ -1505,7 +1505,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
           out$X <- fitg$X
         }
       }
-      
+      if(family=="negative.binomialPG")out$family="negative.binomial"
       if(col.eff == "random" || (isFALSE(col.eff) && !is.null(randomX))){
         if(!is.null(colMat)){
           out$col.eff$colMat <- fitg$colMat

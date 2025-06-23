@@ -766,7 +766,7 @@ trait.TMB <- function(
       map.list$r0r <- factor(NA)
     }
     
-    extra <- c(0,1,0)
+    extra <- c(0,1,0,0)
     
     # Common intercept
     if(beta0com){
@@ -1120,6 +1120,7 @@ trait.TMB <- function(
     
     if(family == "poisson") { familyn=0}
     if(family == "negative.binomial") { familyn=1}
+    if(family == "negative.binomialPG"){familyn <- 1;extra[4]<-1;family = "negative.binomial"}
     if(family == "binomial") {
       familyn <- 2;
       if(link=="probit") extra[1] <- 1

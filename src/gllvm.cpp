@@ -2671,7 +2671,7 @@ Type objective_function<Type>::operator() ()
         }
         // nll -= 0.5*(log(Ar(i)) - Ar(i)/pow(sigma,2) - pow(r0r(i)/sigma,2))*random(0);
       }
-    } else if((family == 1) && (method<1)){//NB VA
+    } else if((family == 1) && (method<1) && (extra(3)<1)){//NB VA
       for (int i=0; i<n; i++) {
         for (int j=0; j<p;j++){
           // nll -= Type(gllvm::dnegbinva(y(i,j), eta(i,j), iphi(j), cQ(i,j)));
@@ -2684,7 +2684,16 @@ Type objective_function<Type>::operator() ()
           }
         }
       }
-    } else if ((family == 1) && (method>1)) { // NB EVA
+    } else if((family == 1) && (method<1) && (extra(3)>0)){
+      for (int i=0; i<n; i++) {
+        for (int j=0; j<p;j++){
+          if(!gllvmutils::isNA(y(i,j))){
+            Type wij = 0.5*sqrt((-lg_phi(j)+eta(i,j))*(-lg_phi(j)+eta(i,j)) + 2*cQ(i,j));
+            nll -= 0.5*(y(i,j)-iphi(j))*(eta(i,j)-lg_phi(j))-(y(i,j)+iphi(j))*logspace_add(-wij,wij)+lgamma(y(i,j)+iphi(j))-lgamma(iphi(j))-lfactorial(y(i,j));
+          }
+        }
+      }
+    }else if ((family == 1) && (method>1)) { // NB EVA
       for (int i=0; i<n; i++) {
         for (int j=0; j<p;j++){
           if(!gllvmutils::isNA(y(i,j))){
@@ -3031,7 +3040,6 @@ Type objective_function<Type>::operator() ()
               nll += cQ(i,j);
             }
           }
-          // nll -= 0.5*(log(Ar(i)) - Ar(i)/pow(sigma,2) - pow(r0r(i)/sigma,2))*random(0);
         }
         }
       } else if (method>1) {
