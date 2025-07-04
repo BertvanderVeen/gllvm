@@ -2688,8 +2688,12 @@ Type objective_function<Type>::operator() ()
       for (int i=0; i<n; i++) {
         for (int j=0; j<p;j++){
           if(!gllvmutils::isNA(y(i,j))){
-            Type wij = 0.5*sqrt((-lg_phi(j)+eta(i,j))*(-lg_phi(j)+eta(i,j)) + 2*cQ(i,j));
-            nll -= 0.5*(y(i,j)-iphi(j))*(eta(i,j)-lg_phi(j))-(y(i,j)+iphi(j))*logspace_add(-wij,wij)+lgamma(y(i,j)+iphi(j))-lgamma(iphi(j))-lfactorial(y(i,j));
+            // Type wij = 0.5*sqrt((-lg_phi(j)+eta(i,j))*(-lg_phi(j)+eta(i,j)) + 2*cQ(i,j));
+            // nll -= 0.5*(y(i,j)-iphi(j))*(eta(i,j)-lg_phi(j))-(y(i,j)+iphi(j))*logspace_add(-wij,wij)+lgamma(y(i,j)+iphi(j))-lgamma(iphi(j))-lfactorial(y(i,j));
+            Type wij = sqrt((-lg_phi(j)+eta(i,j))*(-lg_phi(j)+eta(i,j)) + 2*cQ(i,j));
+            // nll -= dnbinom_robust(y(i,j), 0.5*(wij+lg_phi(j)), 0.5*(lg_phi(j)-wij), 1);
+            nll -= dnbinom_logit(y(i,j), iphi(j), wij, 1);
+            nll -= 0.5*(y(i,j)-iphi(j))*(eta(i,j)-lg_phi(j) + wij);
           }
         }
       }
