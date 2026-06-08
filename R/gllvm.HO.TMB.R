@@ -280,24 +280,35 @@ gllvm.HO.TMB <- function(
     num.lv       = d,
     method       = "VA",
     random.loadings = TRUE,
-    ## Site scores: VA means (a_i), possibly scaled by sigma for plotting
+    ## Site scores: VA means (a_i)
     lvs          = u_hat,
-    ## Species loadings: VA means (a_j)
+    ## Species loadings: VA means (a_j), unscaled
     loadings     = alv_hat,
     ## Fitted params
+    ## theta is UNSCALED (= alv_hat); ordiplot/getResidualCov apply sigma.lv separately
     params       = list(
-      beta0   = b_hat[1, ],
-      Xcoef   = if (Kx > 1) t(b_hat[-1, , drop = FALSE]) else NULL,
+      beta0    = b_hat[1, ],
+      Xcoef    = if (Kx > 1) t(b_hat[-1, , drop = FALSE]) else NULL,
       sigma.lv = sigma_hat,
-      theta   = sweep(alv_hat, 2, sigma_hat, `*`)  # a_j * sigma (species scores in ordination)
+      theta    = alv_hat           # unscaled species loadings (p x d)
     ),
-    ## Variational covariance diagonal arrays
-    A            = Ai_diag,    # n x d diagonal entries of A_i
-    A_lv         = Aj_diag,   # p x d diagonal entries of A_j
+    ## Variational covariance diagonals (stored as matrices, not 3D arrays)
+    A            = Ai_diag,        # n x d  diag entries of A_i
+    A_lv         = Aj_diag,        # p x d  diag entries of A_j
+    ## Fields expected by generic S3 methods inherited from gllvm
+    num.lv.c     = 0L,
+    num.RR       = 0L,
+    num.lvcor    = 0L,
+    randomB      = FALSE,
+    quadratic    = FALSE,
+    lv.X         = NULL,
+    lv.X.design  = NULL,
+    col.eff      = list(col.eff = FALSE),
+    row.eff      = if (isTRUE(row.eff)) "random" else FALSE,
+    sd           = TRUE,           # non-FALSE: getPredictErr.gllvmHO provides errors
     ## Optimisation info
     logL         = -opt$objective,
     convergence  = if (is.numeric(opt$convergence)) opt$convergence == 0 else opt$convergence,
-    ## TMB object (for CMSEPf, etc.)
     TMBfn        = obj,
     optim.method = "nlminb",
     Ntrials      = Ntrials,

@@ -229,6 +229,43 @@ getResidualCov.gllvm = function(object, adjust = 1, x = NULL, ...)
   return(out)
 }
 
+#'@export getResidualCov.gllvmHO
+#'@method getResidualCov gllvmHO
+getResidualCov.gllvmHO <- function(object, adjust = 1, ...) {
+  p      <- ncol(object$y)
+  sigma  <- object$params$sigma.lv
+  # Conditional residual covariance: treat a_j fixed at VA means.
+  # Cov(eta_ij, eta_ij') = theta_j^T theta_j'  where theta_j = sigma * a_j
+  theta_sc <- sweep(object$params$theta, 2, sigma, `*`)   # p x d
+  cov_mat  <- theta_sc %*% t(theta_sc)
+
+  # Per-LV contribution list (compatible with getResidualCor)
+  Ql <- lapply(seq_along(sigma), function(k)
+    outer(theta_sc[, k], theta_sc[, k]))
+
+  # Family overdispersion adjustments (mirrors getResidualCov.gllvm)
+  fam <- rep_len(object$family, p)
+  if (adjust > 0) {
+    if (any(fam %in% c("negative.binomial", "ZINB"))) {
+      idx <- fam %in% c("negative.binomial", "ZINB")
+      if (adjust == 1)
+        cov_mat[idx, idx] <- cov_mat[idx, idx] +
+          diag(log(object$params$phi[idx] + 1), sum(idx))
+      else if (adjust == 2)
+        cov_mat[idx, idx] <- cov_mat[idx, idx] +
+          diag(trigamma(1 / object$params$phi[idx]), sum(idx))
+    }
+    if (any(fam == "gaussian")) {
+      idx <- fam == "gaussian"
+      cov_mat[idx, idx] <- cov_mat[idx, idx] +
+        diag(object$params$phi[idx]^2, sum(idx))
+    }
+  }
+
+  rownames(cov_mat) <- colnames(cov_mat) <- colnames(object$y)
+  list(cov = cov_mat, trace = sum(diag(cov_mat)), var.q = Ql)
+}
+
 #'@export getResidualCov
 getResidualCov <- function(object, ...)
 {

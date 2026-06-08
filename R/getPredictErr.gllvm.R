@@ -274,6 +274,26 @@ getPredictErr.gllvm = function(object, CMSEP = TRUE, cov = FALSE, ...)
   return(out)
 }
 
+#'@export getPredictErr.gllvmHO
+#'@method getPredictErr gllvmHO
+getPredictErr.gllvmHO <- function(object, cov = FALSE, ...) {
+  # VA variances are available directly from the fitted object.
+  # object$A   : n x d diagonal entries of A_i (site VA covariances)
+  # object$A_lv: p x d diagonal entries of A_j (species VA covariances)
+  out <- list()
+  if (cov) {
+    d <- ncol(object$A)
+    out$lvs      <- lapply(seq_len(nrow(object$A)),
+                           function(i) diag(object$A[i, ], d))
+    out$loadings <- lapply(seq_len(nrow(object$A_lv)),
+                           function(j) diag(object$A_lv[j, ], d))
+  } else {
+    out$lvs      <- sqrt(object$A)       # n x d  SDs for site scores
+    out$loadings <- sqrt(object$A_lv)    # p x d  SDs for species loadings
+  }
+  out
+}
+
 #'@export getPredictErr
 getPredictErr <- function(object, ...)
 {
