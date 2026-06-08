@@ -102,9 +102,9 @@ gllvm.HO.TMB <- function(
 
   ## ---- fixed-effect design matrix -----------------------------------------
   if (is.null(X)) {
-    Xmat <- matrix(1, n, 1)   # intercept only
+    Xmat <- matrix(1, n, 1)
   } else {
-    Xmat <- cbind(1, X)       # prepend intercept
+    Xmat <- cbind(1, as.matrix(X))   # ensure matrix; prepend intercept
   }
   Kx <- ncol(Xmat)
 
@@ -214,26 +214,49 @@ gllvm.HO.TMB <- function(
   )
 
   ## ---- Diagonal-A inner iterations ----------------------------------------
+  ## Rebuild full param list from obj$env$last.par.best (includes fixed params),
+  ## then fix everything except Au/Au_sp using correct full-length factors.
   for (iter in seq_len(max(diag.iter, 0L))) {
-    ## Fix all non-variance params; optimise Au / Au_sp only
-    map_diag <- lapply(names(obj$par), function(nm) {
-      if (nm %in% c("Au", "Au_sp")) NULL else factor(rep(NA, sum(names(obj$par) == nm)))
-    })
-    names(map_diag) <- names(obj$par)
-    map_diag <- map_diag[!sapply(map_diag, is.null)]
+    full_par <- obj$env$last.par.best
+
+    # Reconstruct named param list from the full (all-param) vector
+    cur_pl <- param.list
+    fp_idx <- 1L
+    for (nm in names(param.list)) {
+      sz <- prod(dim(as.array(param.list[[nm]])))
+      if (sz == 0L) next
+      chunk <- full_par[fp_idx:(fp_idx + sz - 1L)]
+      cur_pl[[nm]] <- if (is.matrix(param.list[[nm]]))
+        matrix(chunk, nrow = nrow(param.list[[nm]])) else chunk
+      fp_idx <- fp_idx + sz
+    }
+
+    # Fix everything except Au and Au_sp (use full lengths from param.list)
+    map_diag <- map.list
+    for (nm in setdiff(names(param.list), c("Au", "Au_sp"))) {
+      sz <- prod(dim(as.array(param.list[[nm]])))
+      if (sz == 0L) next
+      map_diag[[nm]] <- factor(rep(NA_integer_, sz))
+    }
+
     obj_diag <- TMB::MakeADFun(
       data       = data.list,
-      parameters = .par_to_list(obj$par, param.list),
-      map        = c(map.list, map_diag),
+      parameters = cur_pl,
+      map        = map_diag,
       DLL        = "gllvm_HO",
       silent     = TRUE
     )
     try(nlminb(obj_diag$par, obj_diag$fn, obj_diag$gr,
                control = list(rel.tol = 1e-6, iter.max = 50, eval.max = 200)),
         silent = TRUE)
-    # Transfer updated Au/Au_sp back
-    par_new <- obj_diag$env$last.par.best
-    obj$par[names(par_new)] <- par_new
+
+    # Transfer updated Au and Au_sp back to main obj$par (by name)
+    for (nm in c("Au", "Au_sp")) {
+      to_idx   <- names(obj$par)      == nm
+      from_idx <- names(obj_diag$par) == nm
+      if (any(to_idx) && any(from_idx))
+        obj$par[to_idx] <- obj_diag$par[from_idx]
+    }
   }
 
   ## ---- Full optimisation --------------------------------------------------

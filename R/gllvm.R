@@ -433,6 +433,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
                   num.lv = NULL, num.lv.c = 0, num.RR = 0, lv.formula = NULL,
                   lvCor = NULL, studyDesign=NULL, dist = list(matrix(0)), distLV = matrix(0), colMat = NULL, colMat.rho.struct = "single", corWithin = FALSE, corWithinLV = FALSE,
                   quadratic = FALSE, row.eff = FALSE, sd.errors = TRUE, offset = NULL, method = "VA", randomB = FALSE,
+                  random.loadings = FALSE,
                   randomX = NULL, beta0com = FALSE, zeta.struc = "species",
                   plot = FALSE, link = "probit", Ntrials = matrix(1),
                   Power = 1.1, seed = NULL, scale.X = TRUE, return.terms = TRUE, 
@@ -1513,6 +1514,33 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
       O <- matrix(rep(offset), nrow = n, ncol = p)
     else
       O <- as.matrix(offset)
+
+    # ---- Hierarchical ordination dispatch --------------------------------
+    if (isTRUE(random.loadings)) {
+      if ((num.lv.c + num.RR) > 0)
+        stop("random.loadings = TRUE does not support num.lv.c or num.RR.")
+      if (is.null(num.lv) || num.lv == 0) num.lv <- 2L
+      sp <- NULL
+      if (!is.null(start.fit) && inherits(start.fit, "gllvmHO"))
+        sp <- list(lvs = start.fit$lvs, loadings = start.fit$loadings)
+      else if (!is.null(start.lvs))
+        sp <- list(lvs = start.lvs)
+      return(gllvm.HO.TMB(
+        y         = y,
+        X         = if (!is.null(X) && ncol(X) > 0) X else NULL,
+        family    = family,
+        num.lv    = as.integer(num.lv),
+        offset    = if (prod(dim(O)) > 1) O else NULL,
+        Ntrials   = Ntrials,
+        row.eff   = isTRUE(row.eff) || identical(row.eff, "random"),
+        maxit     = maxit,
+        reltol    = reltol,
+        diag.iter = diag.iter,
+        trace     = isTRUE(trace),
+        start.params = sp
+      ))
+    }
+    # ----------------------------------------------------------------------
 
     if (is.matrix(start.lvs)) {
       starting.val <- "random"
