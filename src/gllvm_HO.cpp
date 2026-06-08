@@ -185,11 +185,14 @@ Type objective_function<Type>::operator() ()
           Type ai  = u(i,k);
           Type aj  = a_lv_sp(j,k);
           Type ck  = Type(1) - sk2 * ui * vj;
-          cq -= Type(0.5) * log(ck);
+          // Clamp ck away from 0 (requires C = I - Sigma A_j Sigma A_i PD).
+          // CppAD::CondExpGt keeps gradients defined at the boundary.
+          Type ck_safe = CppAD::CondExpGt(ck, Type(1e-6), ck, Type(1e-6));
+          cq -= Type(0.5) * log(ck_safe);
           cq += Type(0.5) * sk2 * ui * aj * aj;
-          cq += sk * sk2 * ui * vj * ai * aj / ck;
-          cq += Type(0.5) * sk * sk2 * vj * vj * ai * ai / ck;
-          cq += Type(0.5) * sk * sk2 * ui * ui * aj * aj / ck;
+          cq += sk * sk2 * ui * vj * ai * aj / ck_safe;
+          cq += Type(0.5) * sk * sk2 * vj * vj * ai * ai / ck_safe;
+          cq += Type(0.5) * sk * sk2 * ui * ui * aj * aj / ck_safe;
         }
       } else {
         // Half-variance correction for non-log-link families

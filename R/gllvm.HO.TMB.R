@@ -147,8 +147,8 @@ gllvm.HO.TMB <- function(
   ## ---- VA covariance starting values (log-Chol diagonals) ----------------
   ## Au(k*n+i)   = log(sqrt(A_i(k,k)))  → A_i(k,k) = exp(2*Au(k*n+i))
   ## Au_sp(k*p+j) = log(sqrt(A_j(k,k))) → A_j(k,k) = exp(2*Au_sp(k*p+j))
-  Au_init    <- rep(log(sqrt(0.5)), d * n)   # A_i(k,k) ≈ 0.5
-  Au_sp_init <- rep(log(sqrt(0.5)), d * p)   # A_j(k,k) ≈ 0.5
+  Au_init    <- rep(log(sqrt(0.1)), d * n)   # A_i(k,k) = 0.1 (small start keeps ck > 0)
+  Au_sp_init <- rep(log(sqrt(0.1)), d * p)   # A_j(k,k) = 0.1
 
   ## ---- data list ----------------------------------------------------------
   data.list <- list(
@@ -378,12 +378,17 @@ gllvm.HO.TMB <- function(
     svals <- c(svals, rep(max(svals) * 0.1, d - d_trunc))
   }
 
+  # Scale down singular values: ck = 1 - sigma^2 * A_i * A_j must be > 0.
+  # With Au_init = log(sqrt(0.1)) -> A_diag = 0.1, need sigma < 1/sqrt(0.1*0.1) = 10.
+  # Use sigma ≤ 1 for a safe margin regardless of data scale.
+  svals_scaled <- pmin(svals / sqrt(nrow(R)), 1.0)
+
   # log-sigmoid parameterisation for sigma ordering
   sigmaLV <- numeric(d)
-  sigmaLV[1] <- log(max(svals[1], 1e-3))
+  sigmaLV[1] <- log(max(svals_scaled[1], 1e-3))
   if (d > 1) {
     for (k in 2:d) {
-      ratio <- svals[k] / max(svals[k - 1], 1e-6)
+      ratio <- svals_scaled[k] / max(svals_scaled[k - 1], 1e-6)
       ratio <- min(max(ratio, 1e-4), 1 - 1e-4)
       sigmaLV[k] <- log(ratio / (1 - ratio))  # logit
     }
