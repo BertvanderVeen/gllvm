@@ -1,3 +1,7 @@
 PKG_CPPFLAGS = -DTMBAD_FRAMEWORK
 PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS)
 PKG_CXXFLAGS=$(SHLIB_OPENMP_CXXFLAGS)
+
+# Only gllvm.cpp is compiled into the main package DLL (gllvm.so).
+# gllvm_HO.cpp is compiled separately on first use by gllvm.HO.TMB.R via TMB::compile().
+OBJECTS = gllvm.o
