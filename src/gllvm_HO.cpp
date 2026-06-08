@@ -53,8 +53,7 @@ Type objective_function<Type>::operator() ()
                               //   Au_sp(k*p+j) = log(L_j(k,k)), A_j(k,k) = exp(2*Au_sp(k*p+j))
 
   // Ordination scale: Sigma = diag(sigma)
-  // sigma(0) = exp(sigmaLV(0))
-  // sigma(k) = sigma(k-1) * invlogit(sigmaLV(k)),  k >= 1  (enforces ordering)
+  // sigma(k) = sum_{l=k}^{d-1} exp(sigmaLV(l))  =>  sigma(0) > ... > sigma(d-1) > 0
   PARAMETER_VECTOR(sigmaLV);  // length d
 
   // Dispersion / zero-inflation
@@ -80,10 +79,12 @@ Type objective_function<Type>::operator() ()
   parallel_accumulator<Type> nll(this);
 
   // ===== SIGMA construction =====
+  // sigma(k) = sum_{l=k}^{d-1} exp(sigmaLV(l))  =>  sigma(0) > ... > sigma(d-1) > 0
+  // Parameterises ordered singular values as cumulative sums of positive increments.
   vector<Type> sigma(d);
-  sigma(0) = exp(sigmaLV(0));
-  for (int k = 1; k < d; k++) {
-    sigma(k) = sigma(k-1) * invlogit(sigmaLV(k));
+  sigma(d-1) = exp(sigmaLV(d-1));
+  for (int k = d-2; k >= 0; k--) {
+    sigma(k) = sigma(k+1) + exp(sigmaLV(k));
   }
   vector<Type> sigma2(d);
   for (int k = 0; k < d; k++) sigma2(k) = sigma(k) * sigma(k);

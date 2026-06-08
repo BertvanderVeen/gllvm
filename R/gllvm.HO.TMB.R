@@ -261,10 +261,11 @@ gllvm.HO.TMB <- function(
   Au_sp_hat  <- par_hat[names(par_hat) == "Au_sp"]
   sigLV_hat  <- par_hat[names(par_hat) == "sigmaLV"]
 
-  ## Recover ordered sigma from log-sigmoid parameterisation
+  ## Recover ordered sigma from cumulative-sum parameterisation
+  ## sigma(k) = sum_{l=k}^{d-1} exp(sigmaLV(l))
   sigma_hat       <- numeric(d)
-  sigma_hat[1]    <- exp(sigLV_hat[1])
-  if (d > 1) for (k in 2:d) sigma_hat[k] <- sigma_hat[k-1] / (1 + exp(-sigLV_hat[k]))
+  sigma_hat[d]    <- exp(sigLV_hat[d])
+  if (d > 1) for (k in (d-1):1) sigma_hat[k] <- sigma_hat[k+1] + exp(sigLV_hat[k])
 
   ## Site VA covariances (diagonal, stored as n x d)
   Ai_diag <- matrix(exp(2 * Au_hat), nrow = n, ncol = d)   # A_i(k,k)
@@ -378,19 +379,19 @@ gllvm.HO.TMB <- function(
     svals <- c(svals, rep(max(svals) * 0.1, d - d_trunc))
   }
 
-  # Scale down singular values: ck = 1 - sigma^2 * A_i * A_j must be > 0.
-  # With Au_init = log(sqrt(0.1)) -> A_diag = 0.1, need sigma < 1/sqrt(0.1*0.1) = 10.
-  # Use sigma ≤ 1 for a safe margin regardless of data scale.
+  # Scale down singular values so ck = 1 - sigma^2 * A_i * A_j > 0 at init.
+  # With Au_init -> A_diag = 0.1, need sigma < 1/sqrt(0.01) = 10; cap at 1.
   svals_scaled <- pmin(svals / sqrt(nrow(R)), 1.0)
+  svals_scaled <- pmax(svals_scaled, 1e-3)   # avoid log(0)
 
-  # log-sigmoid parameterisation for sigma ordering
+  # Cumulative-sum parameterisation: sigma(k) = sum_{l=k}^{d} exp(sigmaLV(l))
+  # Invert: delta(d) = sigma(d);  delta(k) = sigma(k) - sigma(k+1)  for k < d
+  # sigmaLV(k) = log(delta(k))
   sigmaLV <- numeric(d)
-  sigmaLV[1] <- log(max(svals_scaled[1], 1e-3))
+  sigmaLV[d] <- log(svals_scaled[d])
   if (d > 1) {
-    for (k in 2:d) {
-      ratio <- svals_scaled[k] / max(svals_scaled[k - 1], 1e-6)
-      ratio <- min(max(ratio, 1e-4), 1 - 1e-4)
-      sigmaLV[k] <- log(ratio / (1 - ratio))  # logit
+    for (k in (d - 1):1) {
+      sigmaLV[k] <- log(max(svals_scaled[k] - svals_scaled[k + 1], 1e-6))
     }
   }
 
