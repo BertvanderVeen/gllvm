@@ -1,48 +1,19 @@
 ##############################################################################
 ## Hierarchical Ordination VA (HO_VA) fitting function
-## Uses gllvm_HO.cpp TMB template (compiled on first use).
+## Uses gllvm_HO TMB template built as a side-car DLL during R CMD INSTALL.
 ## Model: eta_ij = beta0_j + x_i^T beta_j + z_i^T Sigma gamma_j
 ##   z_i ~ N(0,I),  gamma_j ~ N(0,I)  (both random)
 ##############################################################################
 
 #' @keywords internal
-.ho_dll_path <- function() {
-  pkg_libs <- system.file("libs", package = "gllvm")
-  so <- file.path(pkg_libs, paste0("gllvm_HO", .Platform$dynlib.ext))
-  if (file.exists(so)) return(so)
-  # Fallback: next to gllvm_HO.cpp in source tree
-  src <- system.file("src", "gllvm_HO.cpp", package = "gllvm")
-  if (nzchar(src))
-    return(file.path(dirname(src), paste0("gllvm_HO", .Platform$dynlib.ext)))
-  stop("Cannot locate gllvm_HO shared library or source.")
-}
-
-#' @keywords internal
 .ensure_ho_dll <- function() {
   if (is.element("gllvm_HO", names(getLoadedDLLs()))) return(invisible(NULL))
-  so <- .ho_dll_path()
-  if (!file.exists(so)) {
-    src <- system.file("src", "gllvm_HO.cpp", package = "gllvm")
-    if (!nzchar(src)) stop("gllvm_HO.cpp not found in gllvm package source.")
-    message("Compiling gllvm_HO.cpp (first use — this takes ~1-2 minutes)...")
-    # Compile in a temp directory so we don't pollute the source tree
-    tmp <- tempdir()
-    file.copy(src, file.path(tmp, "gllvm_HO.cpp"), overwrite = TRUE)
-    # Copy required headers
-    srcdir <- dirname(src)
-    for (h in c("family_va_nll.h", "family_nll.h", "distrib.h", "init.h",
-                "utils.h", "poissonbinom.h")) {
-      hf <- file.path(srcdir, h)
-      if (file.exists(hf)) file.copy(hf, file.path(tmp, h), overwrite = TRUE)
-    }
-    wd <- getwd()
-    on.exit(setwd(wd))
-    setwd(tmp)
-    TMB::compile("gllvm_HO.cpp",
-                 flags = "-DTMBAD_FRAMEWORK",
-                 openmp = TRUE)
-    so <- file.path(tmp, paste0("gllvm_HO", .Platform$dynlib.ext))
-  }
+  ext <- .Platform$dynlib.ext
+  so <- system.file("libs", paste0("gllvm_HO", ext), package = "gllvm")
+  if (!nzchar(so))
+    so <- system.file("src",  paste0("gllvm_HO", ext), package = "gllvm")
+  if (!nzchar(so))
+    stop("gllvm_HO shared library not found; please reinstall the gllvm package.")
   dyn.load(so)
   invisible(NULL)
 }
