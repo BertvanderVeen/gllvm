@@ -33,6 +33,7 @@
 #'@export
 #'@export se.gllvm
 se.gllvm <- function(object, ...){
+  if (inherits(object, "gllvmHO")) return(.se_gllvmHO(object, ...))
   if(!is.finite(object$logL)) stop("Standard errors can not be calculated if log-likelihood value is not finite.")
   if(object$TMB == FALSE) stop("Function is not implemented for TMB = FALSE.")
   objrFinal <- object$TMBfn
@@ -1103,4 +1104,227 @@ se.gllvm <- function(object, ...){
 se <- function(object, ...)
 {
   UseMethod(generic = "se")
+}
+
+## SE computation for hierarchical ordination (gllvmHO) objects.
+## Uses the same scaled-Hessian Schur-complement approach as se.gllvm for
+## standard VA models, marginalising over both site VA params (u, Au) and
+## species VA params (a_lv_sp, Au_sp).
+#' @keywords internal
+.se_gllvmHO <- function(object, ...) {
+  if (!is.finite(object$logL))
+    stop("Standard errors cannot be calculated if log-likelihood is not finite.")
+
+  objrFinal <- object$TMBfn
+  fam  <- object$family
+  n    <- nrow(object$y);  p <- ncol(object$y)
+  d    <- object$num.lv + (object$num.lv.c %||% 0L) + (object$num.RR %||% 0L)
+  Kx   <- ncol(object$X.design)
+
+  ## Full joint Hessian of the VA objective
+  sdr <- objrFinal$he(objrFinal$par)
+  rownames(sdr) <- colnames(sdr) <- names(objrFinal$par)
+
+  m     <- length(objrFinal$par)
+  incl  <- rep(TRUE,  m)    # TRUE  = fixed-effect param → report SE
+  incld <- rep(FALSE, m)    # TRUE  = VA param  → Schur-complement out
+
+  ## VA parameters (site + species means and Cholesky factors, row-effect VA,
+  ##   random b_z / b_gamma Cholesky factors, and b_z / b_gamma VA posterior means)
+  for (nm in c("u", "Au", "a_lv_sp", "Au_sp", "r0r", "lg_Ar",
+               "Ab_z", "Ab_gamma", "b_z", "b_gamma")) {
+    idx <- names(objrFinal$par) == nm
+    incld[idx] <- TRUE
+    incl[idx]  <- FALSE
+  }
+
+  ## Parameters always fixed in the map — exclude
+  for (nm in c("ePower"))
+    incl[names(objrFinal$par) == nm] <- FALSE
+
+  ## sigmaLV ordering increments: sigma(k) = sigma(k+1) + exp(sigmaLV(k)).
+  ## When sigmaLV(k) is very negative (< -10) the increment is effectively zero
+  ## and the parameter is on the ordering boundary — its Hessian contribution
+  ## is negligible; exclude to avoid a negative-variance artefact.
+  slv_idx     <- which(names(objrFinal$par) == "sigmaLV")
+  slv_val     <- objrFinal$par[slv_idx]
+  on_boundary <- integer(0)
+  ## All but the last sigmaLV entry are ordering increments; the last is log(sigma_min).
+  ## An increment with value << 0 means sigma[k] ≈ sigma[k+1] — ordering boundary.
+  if (length(slv_idx) > 1L) {
+    on_boundary <- slv_idx[-length(slv_idx)][slv_val[-length(slv_val)] < -10]
+    incl[on_boundary]  <- FALSE
+    incld[on_boundary] <- FALSE
+  }
+
+  if (!any(fam == "ordinal"))
+    incl[names(objrFinal$par) == "zeta"] <- FALSE
+  if (!any(fam %in% c("ZINB", "ZNIB")))
+    incl[names(objrFinal$par) == "lg_phiZINB"] <- FALSE
+  if (!any(fam %in% c("negative.binomial", "gaussian", "gamma", "tweedie",
+                       "beta", "betaH", "orderedBeta", "beta.binomial",
+                       "exponential", "ZINB", "ZNIB", "ZIB", "ZNIB")))
+    incl[names(objrFinal$par) == "lg_phi"] <- FALSE
+
+  has_random_re <- !isFALSE(object$row.eff) && inherits(object$row.eff, "formula") &&
+                   lme4::anyBars(object$row.eff)
+  has_fixed_re  <- !isFALSE(object$row.eff) && !has_random_re
+  if (!has_fixed_re)  incl[names(objrFinal$par) == "r0f"]      <- FALSE
+  if (!has_random_re) incl[names(objrFinal$par) == "log_sigma"] <- FALSE
+
+  out <- list(sd = list(), Hess = NULL, prediction.errors = list())
+
+  if (!any(incld)) {
+    ## No VA params to marginalise — simple inversion
+    cov.mat.mod <- try(MASS::ginv(sdr[incl, incl]), silent = TRUE)
+    if (inherits(cov.mat.mod, "try-error"))
+      stop("Standard errors could not be calculated due to singular fit.")
+    se_vec <- sqrt(pmax(diag(cov.mat.mod), 0))
+    names(se_vec) <- names(objrFinal$par)[incl]
+    rownames(cov.mat.mod) <- colnames(cov.mat.mod) <- names(se_vec)
+    out$Hess <- list(Hess.full = sdr, incl = incl, cov.mat.mod = cov.mat.mod)
+  } else {
+    ## Schur complement to marginalise VA params
+    sds <- sqrt(abs(diag(sdr)))
+    sds[!is.finite(sds) | sds < 1e-12] <- 1
+    sdr.s <- sweep(sweep(sdr, 1, sds, "/"), 2, sds, "/")
+
+    A.mat <- sdr.s[incl,  incl ]
+    D.mat <- as(sdr.s[incld, incld], "TsparseMatrix")
+    B.mat <- sdr.s[incl,  incld]
+
+    I.mat <- A.mat - B.mat %*% as.matrix(solve(D.mat, t(B.mat)))
+    if (!isSymmetric(I.mat)) I.mat <- 0.5 * I.mat + 0.5 * t(I.mat)
+
+    cov.mat.mod <- try(MASS::ginv(I.mat), silent = TRUE)
+    if (inherits(cov.mat.mod, "try-error")) {
+      Ai <- try(solve(A.mat), silent = TRUE)
+      cov.mat.mod <- Ai + Ai %*% B.mat %*%
+        MASS::ginv(as.matrix(D.mat - t(B.mat) %*% Ai %*% B.mat)) %*% t(B.mat) %*% Ai
+    }
+    cov.mat.mod <- sweep(sweep(cov.mat.mod, 2, sds[incl], "/"), 1, sds[incl], "/")
+
+    if (inherits(cov.mat.mod, "try-error"))
+      stop("Standard errors could not be calculated due to singular fit.")
+
+    dv <- diag(cov.mat.mod)
+    if (any(dv < 0, na.rm = TRUE))
+      warning(sprintf(
+        "%d parameter(s) have negative variance; model may not have converged.",
+        sum(dv < 0, na.rm = TRUE)))
+    se_vec <- sqrt(pmax(dv, 0))
+    names(se_vec) <- names(objrFinal$par)[incl]
+
+    incla <- names(objrFinal$par) == "u"
+    rownames(cov.mat.mod) <- colnames(cov.mat.mod) <- names(se_vec)
+    out$Hess <- list(Hess.full = sdr, incl = incl, incld = incld, incla = incla,
+                     cov.mat.mod = cov.mat.mod)
+  }
+
+  ## Expand mapped parameters back to full length, then relist
+  if (any(names(se_vec) %in% names(objrFinal$env$map))) {
+    mp <- objrFinal$env$map[names(objrFinal$env$map) %in% names(se_vec)]
+    se.new <- NULL
+    for (nm in unique(names(se_vec))) {
+      if (!nm %in% names(mp)) {
+        se.new <- c(se.new, se_vec[names(se_vec) == nm])
+      } else {
+        se.new <- c(se.new, se_vec[names(se_vec) == nm][mp[[nm]]])
+      }
+    }
+    se_vec <- se.new
+  }
+  se_lst <- relist_gllvm(se_vec, objrFinal$env$parList())
+
+  ## Map to output$sd structure
+  out$sd$beta0 <- se_lst$b[1, ]
+  names(out$sd$beta0) <- colnames(object$y)
+  if (Kx > 1) {
+    out$sd$Xcoef <- t(se_lst$b[-1, , drop = FALSE])
+    rownames(out$sd$Xcoef) <- colnames(object$y)
+    colnames(out$sd$Xcoef) <- colnames(object$X.design)[-1]
+  }
+  out$sd$sigma.lv <- se_lst$sigmaLV
+  ## sigmaLV increment entries that were excluded (on_boundary) come back as 0 or NA
+  ## from relist_gllvm.  Replace any such entries with NA and emit one warning that
+  ## explains the rotational indeterminacy — identical to the equal-eigenvalue
+  ## situation in PCA where distinct singular values are needed to identify axes.
+  if (length(on_boundary) > 0L) {
+    ## Local positions within sigmaLV: on_boundary are global par indices.
+    ## The k-th increment links sigma[k] and sigma[k+1], so flag both.
+    boundary_local <- on_boundary - slv_idx[1L] + 1L   # 1-based within sigmaLV
+    affected <- sort(unique(c(boundary_local, boundary_local + 1L)))
+    affected <- affected[affected <= d]
+    out$sd$sigma.lv[affected] <- NA_real_
+    warning(sprintf(
+      "sigma.lv dimensions %s have equal (or near-equal) scale: ordination axes in those dimensions are rotationally indeterminate and their SEs are NA. SEs for the corresponding loadings and scores are also not meaningful.",
+      paste(affected, collapse = " and ")
+    ))
+  }
+  names(out$sd$sigma.lv) <- paste0("LV", seq_len(d))
+
+  ## Species loadings (a_lv_sp) are VA means, not fixed-effect parameters.
+  ## Their uncertainty is captured in prediction.errors$loadings below.
+
+  ## Dispersion — delta method: se(phi) = phi * se(log phi)
+  if (!is.null(se_lst$lg_phi) && length(se_lst$lg_phi) > 0 &&
+      !is.null(object$params$phi)) {
+    out$sd$phi <- se_lst$lg_phi * object$params$phi
+    names(out$sd$phi) <- colnames(object$y)
+  }
+
+  ## Ordinal cutpoints — raw SE on parameterised scale
+  if (!is.null(se_lst$zeta) && length(se_lst$zeta) > 0)
+    out$sd$zeta <- se_lst$zeta
+
+  ## Prior scale SEs for random b_z / b_gamma (delta method: se(sigma) = sigma * se(log sigma))
+  if (!is.null(object$params$sigma.bz) && !is.null(se_lst$log_sigma_bz)) {
+    d_c_eff <- length(object$params$sigma.bz)
+    lsig_se <- se_lst$log_sigma_bz[seq_len(d_c_eff)]
+    out$sd$sigma.bz <- lsig_se * object$params$sigma.bz
+    names(out$sd$sigma.bz) <- paste0("LV", seq_len(d_c_eff))
+  }
+  if (!is.null(object$params$sigma.bgamma) && !is.null(se_lst$log_sigma_bgamma)) {
+    d_t_eff <- length(object$params$sigma.bgamma)
+    lsig_se <- se_lst$log_sigma_bgamma[seq_len(d_t_eff)]
+    out$sd$sigma.bgamma <- lsig_se * object$params$sigma.bgamma
+    names(out$sd$sigma.bgamma) <- paste0("LV", seq_len(d_t_eff))
+  }
+
+  ## Prediction errors from VA covariances: sqrt of diagonal of A_i / A_j
+  out$prediction.errors$lvs      <- sqrt(object$A_diag)     # n x d
+  out$prediction.errors$loadings <- sqrt(object$A_lv_diag)  # p x d
+
+  ## Prediction errors for b_z / b_gamma from diagonal of AB_z(l) AB_z(l)^T
+  ## Ab_z layout: diagonal entries Ab_z[q*d_c + l] (0-indexed), q=0..Kz-1, l=0..d_c-1
+  if (!is.null(object$params$b_z) && !is.null(object$params$sigma.bz)) {
+    Kz    <- nrow(object$params$b_z)
+    d_c   <- length(object$params$sigma.bz)
+    Ab_z_hat <- objrFinal$par[names(objrFinal$par) == "Ab_z"]
+    if (length(Ab_z_hat) >= Kz * d_c) {
+      pe_bz <- matrix(NA_real_, Kz, d_c)
+      for (l in seq_len(d_c))
+        for (q in seq_len(Kz))
+          pe_bz[q, l] <- exp(Ab_z_hat[(q - 1L) * d_c + l])
+      rownames(pe_bz) <- rownames(object$params$b_z)
+      colnames(pe_bz) <- paste0("LV", seq_len(d_c))
+      out$prediction.errors$b_z <- pe_bz
+    }
+  }
+  if (!is.null(object$params$b_gamma) && !is.null(object$params$sigma.bgamma)) {
+    Kt    <- nrow(object$params$b_gamma)
+    d_t   <- length(object$params$sigma.bgamma)
+    Ab_g_hat <- objrFinal$par[names(objrFinal$par) == "Ab_gamma"]
+    if (length(Ab_g_hat) >= Kt * d_t) {
+      pe_bg <- matrix(NA_real_, Kt, d_t)
+      for (l in seq_len(d_t))
+        for (q in seq_len(Kt))
+          pe_bg[q, l] <- exp(Ab_g_hat[(q - 1L) * d_t + l])
+      rownames(pe_bg) <- rownames(object$params$b_gamma)
+      colnames(pe_bg) <- paste0("LV", seq_len(d_t))
+      out$prediction.errors$b_gamma <- pe_bg
+    }
+  }
+
+  out
 }

@@ -430,7 +430,7 @@
 #'
 
 gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, family,
-                  num.lv = NULL, num.lv.c = 0, num.RR = 0, lv.formula = NULL,
+                  num.lv = NULL, num.lv.c = 0, num.RR = 0, lv.formula = NULL, load.formula = NULL,
                   lvCor = NULL, studyDesign=NULL, dist = list(matrix(0)), distLV = matrix(0), colMat = NULL, colMat.rho.struct = "single", corWithin = FALSE, corWithinLV = FALSE,
                   quadratic = FALSE, row.eff = FALSE, sd.errors = TRUE, offset = NULL, method = "VA", randomB = FALSE,
                   random.loadings = FALSE,
@@ -455,7 +455,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
   if((num.RR+num.lv.c)==0){
     randomB <- FALSE
   }
-  if((num.RR+num.lv.c)==0 && !is.null(lv.formula))warning("lv.formula is ignored in models with num.RR = 0 and num.lv.c = 0. \n")
+  if((num.RR+num.lv.c)==0 && !is.null(lv.formula) && !isTRUE(random.loadings))warning("lv.formula is ignored in models with num.RR = 0 and num.lv.c = 0. \n")
 
   if(!randomB%in%c(FALSE,"single","P","LV","iid")){
     stop("RandomB should be one of FALSE, 'single', 'P', 'LV', or 'iid'.")
@@ -472,6 +472,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
     term <- NULL
     term2 <- NULL
     datayx <- NULL
+    lv.X.design <- NULL   # always initialise; specific code paths below may override
     if(is.null(X)|!is.null(X)&(num.lv.c+num.RR)==0){lv.X <- NULL;lv.X.design=NULL}
     pp.pars <- list(...)
     
@@ -683,7 +684,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
     # For tweedie & optim, optim.method always "L-BFGS-B"
     if(is.null(optim.method) && optimizer == "optim") optim.method <- ifelse(any(family == "tweedie"), "L-BFGS-B", "BFGS")
     
-    if(!is.null(TR)&num.lv.c>0|!is.null(TR)&num.RR>0){
+    if(!isTRUE(random.loadings) && (!is.null(TR)&num.lv.c>0|!is.null(TR)&num.RR>0)){
       stop("Cannot fit model with traits and reduced rank predictors. \n")
     }
     
@@ -720,7 +721,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
         stop("NAs are not allowed in 'TR'.")
     }
     #is.null(X)&is.null(data)&num.lv.c>0|
-    if((num.RR+num.lv.c)>0&is.null(X)&is.null(data)){
+    if(!isTRUE(random.loadings) && (num.RR+num.lv.c)>0&is.null(X)&is.null(data)){
       stop("Cannot constrain latent variables without predictors. Please provide X, or set num.lv.c=0 or num.RR=0. \n")
     }
     
@@ -1059,7 +1060,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
     #check for redundant predictors
     
     if(!is.null(lv.X.design)){
-      if((num.RR+num.lv.c)>ncol(lv.X.design) && isFALSE(randomB)){
+      if((num.RR+num.lv.c)>ncol(lv.X.design) && isFALSE(randomB) && !isTRUE(random.loadings)){
         stop("Cannot have more reduced dimensions than the number of predictor variables. Please reduce num.RR or num.lv.c \n")
       }
       if((num.RR+num.lv.c)>p){
@@ -1517,28 +1518,161 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
 
     # ---- Hierarchical ordination dispatch --------------------------------
     if (isTRUE(random.loadings)) {
-      if ((num.lv.c + num.RR) > 0)
-        stop("random.loadings = TRUE does not support num.lv.c or num.RR.")
-      if (is.null(num.lv) || num.lv == 0) num.lv <- 2L
+      ## Total LV dimension: sum across all three LV types
+      ho_d <- (if (is.null(num.lv) || num.lv == 0) 0L else as.integer(num.lv)) +
+              as.integer(num.lv.c) + as.integer(num.RR)
+      if (ho_d == 0L) ho_d <- 2L
+      num.lv <- ho_d
+
+      ## Helper: extract csb pairs from a bar formula for HO.
+      ## bar terms with multiple LHS predictors and single | (not ||) contribute
+      ## correlated pairs; || terms (which findbars1 splits into single-var bars)
+      ## do not.
+      .ho_bars_to_csb <- function(lv.f, df) {
+        bar.f_orig <- findbars1(lv.f)
+        lv.f_exp   <- expandDoubleVerts2(lv.f)
+        bar.f_exp  <- findbars1(lv.f_exp)
+        ## Predictor variable names: LHS of each bar term in the original formula
+        ## (single-bar and double-bar both contribute predictors)
+        all_lhs_vars <- unique(unlist(lapply(bar.f_exp, function(b) all.vars(b[[2]]))))
+        ## Build plain model matrix (no intercept)
+        lv_form_plain <- reformulate(all_lhs_vars, intercept = FALSE)
+        mf   <- model.frame(lv_form_plain, data = as.data.frame(df))
+        mm   <- model.matrix(lv_form_plain, data = mf)
+        ## Remove intercept column if present
+        if (any(apply(mm, 2, function(x) all(x == 1))))
+          mm <- mm[, !apply(mm, 2, function(x) all(x == 1)), drop = FALSE]
+        pred_names <- colnames(mm)
+        ## Correlated pairs: bar terms in ORIGINAL formula with multiple LHS vars
+        ## (those are single-| terms; || terms get split by findbars1 into singles)
+        pairs_list <- list()
+        for (bt in bar.f_orig) {
+          lhs_vars <- all.vars(bt[[2]])
+          if (length(lhs_vars) < 2L) next
+          ## 1-based column indices in mm
+          cols <- sort(match(lhs_vars, pred_names), decreasing = TRUE)
+          cols <- cols[!is.na(cols)]
+          if (length(cols) >= 2L) {
+            pr <- combn(cols, 2L)
+            pairs_list <- c(pairs_list,
+                            lapply(seq_len(ncol(pr)), function(k) pr[, k]))
+          }
+        }
+        csb <- if (length(pairs_list) > 0L)
+          matrix(as.integer(unlist(pairs_list)), ncol = 2L, byrow = TRUE)
+        else
+          matrix(0L, 0L, 2L)
+        list(mm = mm, csb = csb)
+      }
+
+      ## --- lv.formula → lv_X_env + correlation structure for b_z ---
+      ho_lv_X   <- NULL
+      csb_z_mat <- matrix(0L, 0L, 2L)
+      if (!is.null(lv.formula)) {
+        ho_data <- if (!is.null(data)) data else if (!is.null(X)) as.data.frame(X) else datayx
+        if (!is.null(ho_data)) {
+          if (anyBars(lv.formula)) {
+            res       <- .ho_bars_to_csb(lv.formula, ho_data)
+            ho_lv_X   <- res$mm
+            csb_z_mat <- res$csb
+          } else {
+            mf_lv   <- model.frame(lv.formula, data = ho_data)
+            ho_lv_X <- model.matrix(lv.formula, data = mf_lv)
+            if (any(apply(ho_lv_X, 2, function(x) all(x == 1))))
+              ho_lv_X <- ho_lv_X[, !apply(ho_lv_X, 2, function(x) all(x == 1)), drop = FALSE]
+          }
+        } else if (!is.null(lv.X.design) && ncol(lv.X.design) > 0) {
+          ## lv.formula was auto-built from X (X already nulled); use lv.X.design directly
+          ho_lv_X <- lv.X.design
+        }
+      } else if (!is.null(lv.X.design) && ncol(lv.X.design) > 0) {
+        ho_lv_X <- lv.X.design
+      } else if (!is.null(X) && ncol(as.matrix(X)) > 0 && (num.RR + num.lv.c) > 0L) {
+        ## lv.formula was not auto-built (e.g. X and TR both provided, no lv.formula)
+        lf_tmp <- formula(paste("~", paste(colnames(as.matrix(X)), collapse = "+")))
+        mm_tmp <- model.matrix(lf_tmp, data = as.data.frame(X))
+        if (any(apply(mm_tmp, 2, function(x) all(x == 1))))
+          mm_tmp <- mm_tmp[, !apply(mm_tmp, 2, function(x) all(x == 1)), drop = FALSE]
+        ho_lv_X <- mm_tmp
+        if (is.null(formula)) X <- NULL  ## without formula, all X go to ordination
+      }
+
+      ## --- load.formula → TR_design + correlation structure for b_gamma ---
+      ho_TR         <- NULL
+      csb_gamma_mat <- matrix(0L, 0L, 2L)
+      if (!is.null(load.formula) && !is.null(TR)) {
+        tr_df <- as.data.frame(TR)
+        if (anyBars(load.formula)) {
+          res           <- .ho_bars_to_csb(load.formula, tr_df)
+          ho_TR         <- res$mm
+          csb_gamma_mat <- res$csb
+        } else {
+          mf_tr  <- model.frame(load.formula, data = tr_df)
+          mm_tr  <- model.matrix(load.formula, data = mf_tr)
+          if (any(apply(mm_tr, 2, function(x) all(x == 1))))
+            mm_tr <- mm_tr[, !apply(mm_tr, 2, function(x) all(x == 1)), drop = FALSE]
+          ho_TR  <- mm_tr
+        }
+      } else if (!is.null(TR) && ncol(as.matrix(TR)) > 0) {
+        tr_df <- as.data.frame(TR)
+        mm_tr <- model.matrix(~ ., data = tr_df)
+        if (any(apply(mm_tr, 2, function(x) all(x == 1))))
+          mm_tr <- mm_tr[, !apply(mm_tr, 2, function(x) all(x == 1)), drop = FALSE]
+        ho_TR <- mm_tr
+      }
+
       sp <- NULL
       if (!is.null(start.fit) && inherits(start.fit, "gllvmHO"))
         sp <- list(lvs = start.fit$lvs, loadings = start.fit$loadings)
       else if (!is.null(start.lvs))
         sp <- list(lvs = start.lvs)
-      return(gllvm.HO.TMB(
-        y         = y,
-        X         = if (!is.null(X) && ncol(X) > 0) X else NULL,
-        family    = family,
-        num.lv    = as.integer(num.lv),
-        offset    = if (prod(dim(O)) > 1) O else NULL,
-        Ntrials   = Ntrials,
-        row.eff   = isTRUE(row.eff) || identical(row.eff, "random"),
-        maxit     = maxit,
-        reltol    = reltol,
-        diag.iter = diag.iter,
-        trace     = isTRUE(trace),
-        start.params = sp
-      ))
+      ## Compute the original (unconstrained) num.lv before it was summed into ho_d
+      num.lv_unc <- ho_d - as.integer(num.lv.c) - as.integer(num.RR)
+      out <- gllvm.iter(
+        y            = y,
+        X            = if (!is.null(X) && ncol(X) > 0) X else NULL,
+        lv.X         = ho_lv_X,
+        TR           = ho_TR,
+        family       = family,
+        num.lv       = as.integer(ho_d),   # total d = num.RR + num.lv.c + num.lv_unc
+        num.lv.c     = as.integer(num.lv.c),
+        num.RR       = as.integer(num.RR),
+        offset       = if (prod(dim(O)) > 1) O else NULL,
+        Ntrials      = Ntrials,
+        row.eff      = row.eff,
+        studyDesign  = studyDesign,
+        Lambda.struc = Lambda.struc,
+        zeta.struc   = zeta.struc,
+        maxit        = maxit,
+        reltol       = reltol,
+        diag.iter    = diag.iter,
+        trace        = isTRUE(trace),
+        start.params = sp,
+        n.init       = n.init,
+        n.init.max   = n.init.max,
+        seed         = seed,
+        starting.val = starting.val,
+        jitter.var   = jitter.var,
+        csb_z        = csb_z_mat,
+        csb_gamma    = csb_gamma_mat,
+        model        = "gllvm.HO.TMB"
+      )
+      out$call <- match.call()
+      ## predict.gllvm needs terms for newdata construction when X is used as fixed effects
+      if (!is.null(out$X) && exists("term") && !is.null(term))
+        out$terms <- term
+      if (isTRUE(sd.errors) && is.finite(out$logL)) {
+        trsd <- try({
+          ses <- se.gllvm(out)
+          out$sd  <- ses$sd
+          out$Hess <- ses$Hess
+          out$prediction.errors <- ses$prediction.errors
+        }, silent = TRUE)
+        if (inherits(trsd, "try-error"))
+          warning("Could not calculate standard errors for HO model: ",
+                  conditionMessage(attr(trsd, "condition")))
+      }
+      return(out)
     }
     # ----------------------------------------------------------------------
 

@@ -83,6 +83,14 @@ while(n.i <= args$n.init && n.i.i<args$n.init.max){
     fit <- tryCatch(do.call(gllvm.TMB, args), error = function(e) { fit_error <<- conditionMessage(e); NULL })
   }else if(model == "trait.TMB"){
     fit <- tryCatch(do.call(trait.TMB, args), error = function(e) { fit_error <<- conditionMessage(e); NULL })
+  }else if(model == "gllvm.HO.TMB"){
+    ## For runs 2+, add jitter so each restart explores a different region.
+    ## Run 1 uses the clean SVD/res start; subsequent runs are jittered.
+    ho_args <- args
+    if (n.i > 1L && identical(ho_args$jitter.var, 0) &&
+        identical(ho_args$starting.val, "res"))
+      ho_args$jitter.var <- 0.5
+    fit <- tryCatch(do.call(gllvm.HO.TMB, ho_args), error = function(e) { fit_error <<- conditionMessage(e); NULL })
   }
   if(!is.null(fit_error) || !is.finite(fit$logL)){
     if(!is.null(fit_error)){
@@ -150,6 +158,8 @@ n.i <- n.i+1;
     fitFinal <- do.call(gllvm.TMB, args)
   }else if(model == "trait.TMB"){
     fitFinal <- do.call(trait.TMB, args)
+  }else if(model == "gllvm.HO.TMB"){
+    fitFinal <- do.call(gllvm.HO.TMB, args)
   }
   fitFinal$seed = seed
 }
