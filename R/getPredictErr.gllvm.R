@@ -274,22 +274,98 @@ getPredictErr.gllvm = function(object, CMSEP = TRUE, cov = FALSE, ...)
   return(out)
 }
 
+#' Hessian-based CMSEP correction for gllvmHO models
+#'
+#' Returns the Hessian-correction matrices to be ADDED to the VA variances to
+#' give the full conditional MSEP.  Called by \code{getPredictErr.gllvmHO}.
+#'
+#' @param fit  A fitted \code{gllvmHO} object with \code{$Hess} populated.
+#' @return A list with \code{$A} (n x d) and \code{$A_lv} (p x d) correction
+#'   matrices (variances in the natural parameterisation, before sigma/alpha
+#'   scaling).
+#' @keywords internal
+CMSEPf_HO <- function(fit) {
+  if (is.null(fit$Hess))
+    stop("No Hessian stored; refit model or ensure Hessian computation succeeded.")
+
+  n <- nrow(fit$y); p <- ncol(fit$y); d <- fit$num.lv
+  H    <- fit$Hess$Hess.full
+  pnms <- rownames(H)
+
+  ## In HO both z_i and a_j are random VA effects; the truly-fixed params {b, sigmaLV}
+  ## have near-zero cross-Hessian with the VA means (verified numerically — the ELBO
+  ## decouples them at convergence).  The meaningful CMSEPf correction propagates
+  ## uncertainty in ONE set of VA means into the OTHER:
+  ##   - site CMSEP : how uncertain a_j estimates make z_i estimates uncertain
+  ##   - species CMSEP : how uncertain z_i estimates make a_j estimates uncertain
+  ##
+  ## Using the implicit-function-theorem derivative
+  ##   dz_i / da_j = -H_{uu}^{-1} H_{ua}
+  ## and treating a_j posterior variance as diag(A_lv):
+  ##   Var_correction(z_i) = D_u * H_{u,a} * diag(A_lv_vec) * H_{a,u} * D_u
+
+  incla_u <- pnms == "u"         # n*d params
+  incla_a <- pnms == "a_lv_sp"   # p*d params
+
+  ## ---- CMSEP correction for site scores: uncertainty from a_j estimates ----
+  if (any(incla_u) && any(incla_a)) {
+    D_u  <- tryCatch(solve(H[incla_u, incla_u, drop = FALSE]),
+                     error = function(e) MASS::ginv(H[incla_u, incla_u, drop = FALSE]))
+    H_ua <- H[incla_u, incla_a, drop = FALSE]   # (n*d) x (p*d)
+    ## Scale columns by sqrt(A_lv) to form D_u * H_ua * diag(A_lv) * H_ua' * D_u
+    A_lv_vec <- as.vector(if (!is.null(fit$A_lv_diag)) fit$A_lv_diag else fit$A_lv)  # p*d
+    Bw_u <- H_ua * rep(sqrt(pmax(A_lv_vec, 0)), each = sum(incla_u))  # (n*d) x (p*d)
+    diag_u <- base::diag(D_u %*% tcrossprod(Bw_u) %*% t(D_u))
+    A_sites <- matrix(0, n, d)
+    for (k in seq_len(d)) A_sites[, k] <- diag_u[(k - 1L)*n + seq_len(n)]
+  } else {
+    A_sites <- matrix(0, n, d)
+  }
+
+  ## ---- CMSEP correction for species loadings: uncertainty from z_i estimates
+  if (any(incla_a) && any(incla_u)) {
+    D_a  <- tryCatch(solve(H[incla_a, incla_a, drop = FALSE]),
+                     error = function(e) MASS::ginv(H[incla_a, incla_a, drop = FALSE]))
+    H_au <- H[incla_a, incla_u, drop = FALSE]   # (p*d) x (n*d)
+    A_u_vec <- as.vector(if (!is.null(fit$A_diag)) fit$A_diag else fit$A)  # n*d
+    Bw_a <- H_au * rep(sqrt(pmax(A_u_vec, 0)), each = sum(incla_a))  # (p*d) x (n*d)
+    diag_a <- base::diag(D_a %*% tcrossprod(Bw_a) %*% t(D_a))
+    A_species <- matrix(0, p, d)
+    for (k in seq_len(d)) A_species[, k] <- diag_a[(k - 1L)*p + seq_len(p)]
+  } else {
+    A_species <- matrix(0, p, d)
+  }
+
+  list(A = A_sites, A_lv = A_species)
+}
+
 #'@export getPredictErr.gllvmHO
 #'@method getPredictErr gllvmHO
-getPredictErr.gllvmHO <- function(object, cov = FALSE, ...) {
-  # VA variances are available directly from the fitted object.
-  # object$A   : n x d diagonal entries of A_i (site VA covariances)
-  # object$A_lv: p x d diagonal entries of A_j (species VA covariances)
+getPredictErr.gllvmHO <- function(object, CMSEP = TRUE, cov = FALSE, ...) {
+  d         <- object$num.lv
+  ## Use diagonal summaries regardless of VA.struct (n x d, p x d)
+  A_sites   <- if (!is.null(object$A_diag))    object$A_diag    else object$A
+  A_species <- if (!is.null(object$A_lv_diag)) object$A_lv_diag else object$A_lv
+
+  if (CMSEP) {
+    if (!is.null(object$Hess)) {
+      sdb       <- CMSEPf_HO(object)
+      A_sites   <- A_sites   + sdb$A
+      A_species <- A_species + sdb$A_lv
+    } else {
+      warning("No Hessian in gllvmHO fit; using VA variances only (CMSEP skipped).")
+    }
+  }
+
   out <- list()
   if (cov) {
-    d <- ncol(object$A)
-    out$lvs      <- lapply(seq_len(nrow(object$A)),
-                           function(i) diag(object$A[i, ], d))
-    out$loadings <- lapply(seq_len(nrow(object$A_lv)),
-                           function(j) diag(object$A_lv[j, ], d))
+    out$lvs      <- lapply(seq_len(nrow(A_sites)),
+                           function(i) diag(A_sites[i, ],   d))
+    out$loadings <- lapply(seq_len(nrow(A_species)),
+                           function(j) diag(A_species[j, ], d))
   } else {
-    out$lvs      <- sqrt(object$A)       # n x d  SDs for site scores
-    out$loadings <- sqrt(object$A_lv)    # p x d  SDs for species loadings
+    out$lvs      <- sqrt(A_sites)    # n x d  SDs for site scores
+    out$loadings <- sqrt(A_species)  # p x d  SDs for species loadings
   }
   out
 }

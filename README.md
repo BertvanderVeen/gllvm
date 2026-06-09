@@ -50,12 +50,12 @@ Three dimension types can be combined freely:
 | Argument | Dimensions | Description |
 |---|---|---|
 | `num.lv` | unconstrained | Pure residual latent variables (standard GLLVM) |
-| `num.lv.c` | VA-constrained | $z_i \sim \mathcal{N}(\mathbf{B}_z^\top \mathbf{x}_i, \mathbf{I})$, $\gamma_j \sim \mathcal{N}(\mathbf{B}_\gamma^\top \mathbf{t}_j, \mathbf{I})$ — **hierarchical ordination** |
-| `num.RR` | RR-constrained | Deterministic scores $z_i = \mathbf{B}_z^\top \mathbf{x}_i$, $\gamma_j = \mathbf{B}_\gamma^\top \mathbf{t}_j$ — **double-constrained ordination** |
+| `num.lv.c` | informed | $z_i \sim \mathcal{N}(\mathbf{B}_z^\top \mathbf{x}_i, \mathbf{I})$, $\gamma_j \sim \mathcal{N}(\mathbf{B}_\gamma^\top \mathbf{t}_j, \mathbf{I})$ — **hierarchical ordination** |
+| `num.RR` | constrained | scores $z_i = \mathbf{B}_z^\top \mathbf{x}_i$, $\gamma_j = \mathbf{B}_\gamma^\top \mathbf{t}_j$ — **double-constrained ordination** |
 
 ## Double-constrained ordination
 
-`num.RR` fixes site scores and species loadings as deterministic linear combinations of
+`num.RR` fixes site scores and species loadings as linear combinations of
 covariates and traits respectively — a reduced-rank regression with both sides constrained.
 
 ```r

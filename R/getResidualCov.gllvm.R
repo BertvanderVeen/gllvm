@@ -40,7 +40,7 @@
 #' For the negative binomial (1) parameterization, we instead have \eqn{\lambda_{ij} \sim Gamma(\mu_{ij}\phi_j, \phi_j)}, so that \eqn{V(log \lambda_{ij} = \psi^{(1)}(\mu_{ij}\phi_j)}.
 #' As this makes the variance of the link-scale model-dependent, no correction is currently applied.
 #' 
-#' In the case of binomial distribution, the adjustment terms (\code{adjust = 1}) are 1 for probit link and \eqn{\pi^2/3} for logit link.
+#' In the case of binomial distribution, the adjustment terms (\code{adjust = 1}) are 1 for probit link, \eqn{\pi^2/3} for logit link, and \eqn{\pi^2/6} for the cloglog link.
 #' These are obtained by treating binomial model as latent variable model. Assume
 #' \deqn{Y^*_{ij} = \eta_{ij} + e_{ij},}
 #' where \eqn{e_{ij} \sim N(0, 1)} for probit model, and \eqn{e_{ij} \sim logistic(0, 1)} for logit model.

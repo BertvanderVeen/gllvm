@@ -41,8 +41,8 @@
               // if(!gllvmutils::isNA(y(i,j)))nll -= y(i,j)*(eta(i,j)-cQ(i,j)) - (y(i,j)+iphi(j))*log(iphi(j)+exp(eta(i,j)-cQ(i,j))) + lgamma(y(i,j)+iphi(j)) - iphi(j)*cQ(i,j) + iphi(j)*log(iphi(j)) - lgamma(iphi(j)) -lfactorial(y(i,j));
               if(!gllvmutils::isNA(y(i,j))){
                 nll -= dnbinom_robust(y(i,j), eta(i,j), 2*eta(i,j) - lg_phi(j), 1);
-                Type log_term_1 = log1p(exp(eta(i,j)-lg_phi(j)));
-                Type log_term_2 = log1p(exp(eta(i,j)-cQ(i,j)-lg_phi(j)));
+                Type log_term_1 = gllvmutils::log1plus(exp(eta(i,j)-lg_phi(j)));
+                Type log_term_2 = gllvmutils::log1plus(exp(eta(i,j)-cQ(i,j)-lg_phi(j)));
                 nll -= (y(i,j)+iphi(j))*(log_term_1-log_term_2)-(y(i,j)+iphi(j))*cQ(i,j);
               }
             // }
@@ -54,7 +54,7 @@
           for (int i=0; i<n; i++) {
             // for (int j=0; j<p;j++){
               if(!gllvmutils::isNA(y(i,j))){
-                nll -= -(y(i,j) + exp(eta(i,j) + cQ(i,j))*iphi(j))*log1p(iphi(j)) - lfactorial(y(i,j)) + iphi(j)*exp(eta(i,j) + cQ(i,j))*(gamma + lg_phi(j)) + eta(i,j) +lg_phi(j) - gamma*exp(eta(i,j)+2*cQ(i,j))*iphi(j) - lgamma(exp(eta(i,j)+2*cQ(i,j))*iphi(j)+1.0) + lgamma(y(i,j) + exp(eta(i,j)+cQ(i,j))*iphi(j));
+                nll -= -(y(i,j) + exp(eta(i,j) + cQ(i,j))*iphi(j))*gllvmutils::log1plus(iphi(j)) - lfactorial(y(i,j)) + iphi(j)*exp(eta(i,j) + cQ(i,j))*(gamma + lg_phi(j)) + eta(i,j) +lg_phi(j) - gamma*exp(eta(i,j)+2*cQ(i,j))*iphi(j) - lgamma(exp(eta(i,j)+2*cQ(i,j))*iphi(j)+1.0) + lgamma(y(i,j) + exp(eta(i,j)+cQ(i,j))*iphi(j));
               }
             // }
           }
@@ -83,7 +83,7 @@
             for (int i=0; i<n; i++) {
               // Type a = 0.5*sqrt(squeeze(eta(i,j)*eta(i,j) + 2*cQ(i,j)));//bound it because derivative logcosh = tanh(10) = 1 flattens
               // Type a = sqrt(eta(i,j)*eta(i,j) + 2*cQ(i,j));
-              // Type softplus_neg_a = CppAD::CondExpGt(a, Type(15), exp(-a), log1p(exp(-a)));
+              // Type softplus_neg_a = CppAD::CondExpGt(a, Type(15), exp(-a), gllvmutils::log1plus(exp(-a)));
               
               //Type b = CppAD::CondExpGt(a, 10, a/8-log(2.0), gllvmutils::logcosh(0.5*sqrt(a)));
               // Type b = CppAD::CondExpGt(a, 10, 10, gllvmutils::logcosh(0.5*sqrt(squeeze(eta(i,j)*eta(i,j) + 2*cQ(i,j)))));
@@ -118,7 +118,7 @@
             // for (int j=0; j<p;j++){
               mu(i,j) = exp(eta(i,j)+cQ(i,j));
               if(!gllvmutils::isNA(y(i,j))){
-                nll -= y(i,j)*log1p(-exp(-mu(i,j)*exp(-cQ(i,j))))-(Ntrials(i,j)-y(i,j))*mu(i,j) + mu(i,j)*(exp(-cQ(i,j))-1);
+                nll -= y(i,j)*gllvmutils::log1plus(-exp(-mu(i,j)*exp(-cQ(i,j))))-(Ntrials(i,j)-y(i,j))*mu(i,j) + mu(i,j)*(exp(-cQ(i,j))-1);
                 if(Ntrials(i,j)>1 && (Ntrials(i,j)>y(i,j))){
                   nll -= lgamma(Ntrials(i,j)+1.) - lgamma(y(i,j)+1.) - lgamma(Ntrials(i,j)-y(i,j)+1.);//norm.const.
                 }
@@ -1021,14 +1021,14 @@
             if(!gllvmutils::isNA(y(i,j))){
               if(y(i,j)>0){
                 nll -= log(1-iphij);
-                nll -= y(i,j)*log1p(-exp(-mu(i,j)*exp(-cQ(i,j))))-(Ntrials(i,j)-y(i,j))*mu(i,j) + mu(i,j)*(exp(-cQ(i,j))-1);
+                nll -= y(i,j)*gllvmutils::log1plus(-exp(-mu(i,j)*exp(-cQ(i,j))))-(Ntrials(i,j)-y(i,j))*mu(i,j) + mu(i,j)*(exp(-cQ(i,j))-1);
                 
                 if(Ntrials(i,j)>1 && (Ntrials(i,j)>y(i,j))){
                   nll -= lgamma(Ntrials(i,j)+1.) - lgamma(y(i,j)+1.) - lgamma(Ntrials(i,j)-y(i,j)+1.);//norm.const.
                 }
               }else{
                 Type LL = 0;
-                LL += y(i,j)*log1p(-exp(-mu(i,j)*exp(-cQ(i,j))))-(Ntrials(i,j)-y(i,j))*mu(i,j) + mu(i,j)*(exp(-cQ(i,j))-1);
+                LL += y(i,j)*gllvmutils::log1plus(-exp(-mu(i,j)*exp(-cQ(i,j))))-(Ntrials(i,j)-y(i,j))*mu(i,j) + mu(i,j)*(exp(-cQ(i,j))-1);
                 
                 if(Ntrials(i,j)>1 && (Ntrials(i,j)>y(i,j))){
                   LL += lgamma(Ntrials(i,j)+1.) - lgamma(Ntrials(i,j)+1.);//norm.const.
@@ -1134,14 +1134,14 @@
             if(!gllvmutils::isNA(y(i,j))){
               if(y(i,j)>0 && y(i,j)< Ntrials(i,j)){
                 nll -= log(1-iphi3);
-                nll -= y(i,j)*log1p(-exp(-mu(i,j)*exp(-cQ(i,j))))-(Ntrials(i,j)-y(i,j))*mu(i,j) + mu(i,j)*(exp(-cQ(i,j))-1);
+                nll -= y(i,j)*gllvmutils::log1plus(-exp(-mu(i,j)*exp(-cQ(i,j))))-(Ntrials(i,j)-y(i,j))*mu(i,j) + mu(i,j)*(exp(-cQ(i,j))-1);
                 
                 if(Ntrials(i,j)>1 && (Ntrials(i,j)>y(i,j))){
                   nll -= lgamma(Ntrials(i,j)+1.) - lgamma(y(i,j)+1.) - lgamma(Ntrials(i,j)-y(i,j)+1.);//norm.const.
                 }
               }else if(y(i,j)==0){
                 Type LL = 0;
-                LL += y(i,j)*log1p(-exp(-mu(i,j)*exp(-cQ(i,j))))-(Ntrials(i,j)-y(i,j))*mu(i,j) + mu(i,j)*(exp(-cQ(i,j))-1);
+                LL += y(i,j)*gllvmutils::log1plus(-exp(-mu(i,j)*exp(-cQ(i,j))))-(Ntrials(i,j)-y(i,j))*mu(i,j) + mu(i,j)*(exp(-cQ(i,j))-1);
 
                 
                 pVA = exp(log(1-iphi3)+LL-log((1-iphi3)*exp(LL)+iphij));
@@ -1150,7 +1150,7 @@
                 nll -= log(iphij)-log(1-pVA);
               }else if(y(i,j) == Ntrials(i,j)){
                 Type LL = 0;
-                LL += y(i,j)*log1p(-exp(-mu(i,j)*exp(-cQ(i,j))))-(Ntrials(i,j)-y(i,j))*mu(i,j) + mu(i,j)*(exp(-cQ(i,j))-1);
+                LL += y(i,j)*gllvmutils::log1plus(-exp(-mu(i,j)*exp(-cQ(i,j))))-(Ntrials(i,j)-y(i,j))*mu(i,j) + mu(i,j)*(exp(-cQ(i,j))-1);
                 
                 pVA2 = exp(log(1-iphi3)+LL-log((1-iphi3)*exp(LL)+iphi2));
                 pVA2 = Type(CppAD::CondExpEq(pVA2, Type(1), pVA2-Type(1e-12), pVA2));//check if pVA is on the boundary
