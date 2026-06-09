@@ -50,13 +50,13 @@ Three dimension types can be combined freely:
 | Argument | Dimensions | Description |
 |---|---|---|
 | `num.lv` | unconstrained | Pure residual latent variables (standard GLLVM) |
-| `num.lv.c` | VA-constrained | Prior mean of $z_i$ follows $\mathbf{x}_i$; prior mean of $\gamma_j$ follows $\mathbf{t}_j$ |
-| `num.RR` | RR-constrained | Deterministic scores $z_i = \mathbf{B}_z^\top \mathbf{x}_i$ |
+| `num.lv.c` | VA-constrained | $z_i \sim \mathcal{N}(\mathbf{B}_z^\top \mathbf{x}_i, \mathbf{I})$, $\gamma_j \sim \mathcal{N}(\mathbf{B}_\gamma^\top \mathbf{t}_j, \mathbf{I})$ — **hierarchical ordination** |
+| `num.RR` | RR-constrained | Deterministic scores $z_i = \mathbf{B}_z^\top \mathbf{x}_i$, $\gamma_j = \mathbf{B}_\gamma^\top \mathbf{t}_j$ — **double-constrained ordination** |
 
 ## Double-constrained ordination
 
-Both environmental covariates and species traits constrain the ordination simultaneously.
-Site scores follow the environmental gradient; species loadings follow the trait gradient.
+`num.RR` fixes site scores and species loadings as deterministic linear combinations of
+covariates and traits respectively — a reduced-rank regression with both sides constrained.
 
 ```r
 library(gllvm)
@@ -66,10 +66,10 @@ mod_dc <- gllvm(
   spider$abund,
   X  = spider$x,
   TR = spider$trait,
-  lv.formula   = ~soil.dry + reflection,   # constrains site scores
-  load.formula = ~length + colour,          # constrains species loadings
+  lv.formula   = ~soil.dry + reflection,   # site scores = B_z^T x_i
+  load.formula = ~length + colour,          # species loadings = B_gamma^T t_j
   family = "poisson",
-  num.lv.c = 2,
+  num.RR = 2,
   random.loadings = TRUE
 )
 
@@ -78,14 +78,15 @@ ordiplot(mod_dc, biplot = TRUE)
 
 ![Double-constrained ordination plot](man/figures/ho_dc_ordiplot.png)
 
-Red arrows show the environmental gradients (coefficients $\mathbf{B}_z$); blue arrows show the
-trait gradients (coefficients $\mathbf{B}_\gamma$). Species labels (in blue) indicate their
-position in the ordination.
+Red arrows show the environmental gradients ($\mathbf{B}_z$); blue arrows show the trait
+gradients ($\mathbf{B}_\gamma$). Species labels indicate their position in loading space.
 
-## Full hierarchical ordination
+## Hierarchical ordination
 
-Adds residual unconstrained dimensions on top of the constrained axes, capturing variation not
-explained by the measured predictors.
+`num.lv.c` treats site scores and species loadings as random, with prior means driven by
+covariates and traits. This is the full hierarchical ordination model: the bilinear term
+$z_i^\top \Sigma \gamma_j$ links environment to species through shared latent axes, while
+residual variation in $z_i$ and $\gamma_j$ captures unexplained structure.
 
 ```r
 mod_ho <- gllvm(
@@ -95,27 +96,27 @@ mod_ho <- gllvm(
   lv.formula   = ~soil.dry + reflection,
   load.formula = ~length + colour,
   family = "poisson",
-  num.lv.c = 2,   # constrained axes (environment + traits)
-  num.lv   = 1,   # residual unconstrained axis
+  num.lv.c = 2,
   random.loadings = TRUE
 )
 
-# Plot the constrained axes (type = "conditional" shows all dims)
 ordiplot(mod_ho, biplot = TRUE)
 ```
 
-![Full hierarchical ordination plot](man/figures/ho_full_ordiplot.png)
+![Hierarchical ordination plot](man/figures/ho_full_ordiplot.png)
+
+Residual unconstrained dimensions can be added alongside: `num.lv.c = 2, num.lv = 1`.
 
 ## Specifying models
 
 | Goal | Arguments |
 |---|---|
 | Unconstrained ordination | `num.lv = 2, random.loadings = TRUE` |
-| Environment constrains sites | `num.lv.c = 2, lv.formula = ~x1 + x2` |
-| Traits constrain species | `num.lv.c = 2, load.formula = ~t1 + t2` |
-| Both (double-constrained) | `num.lv.c = 2, lv.formula = ~x1, load.formula = ~t1` |
-| Deterministic RR scores | `num.RR = 2` |
-| Mixed constrained + residual | `num.lv.c = 2, num.lv = 1, lv.formula = ~x1` |
+| Hierarchical ordination (env + traits) | `num.lv.c = 2, lv.formula = ~x1, load.formula = ~t1` |
+| Hierarchical + residual axes | `num.lv.c = 2, num.lv = 1, lv.formula = ~x1, load.formula = ~t1` |
+| Double-constrained ordination | `num.RR = 2, lv.formula = ~x1, load.formula = ~t1` |
+| Environment only (no traits) | `num.lv.c = 2, lv.formula = ~x1` |
+| Traits only (no env) | `num.lv.c = 2, load.formula = ~t1` |
 
 When `X` and/or `TR` are provided without a formula and `num.lv.c > 0` or `num.RR > 0`,
 all columns of `X` are used as canonical covariates and all columns of `TR` as trait
