@@ -288,84 +288,133 @@ CMSEPf_HO <- function(fit) {
   if (is.null(fit$Hess))
     stop("No Hessian stored; refit model or ensure Hessian computation succeeded.")
 
-  n <- nrow(fit$y); p <- ncol(fit$y); d <- fit$num.lv
+  n <- nrow(fit$y); p <- ncol(fit$y)
   H    <- fit$Hess$Hess.full
   pnms <- rownames(H)
 
-  ## In HO both z_i and a_j are random VA effects; the truly-fixed params {b, sigmaLV}
-  ## have near-zero cross-Hessian with the VA means (verified numerically — the ELBO
-  ## decouples them at convergence).  The meaningful CMSEPf correction propagates
-  ## uncertainty in ONE set of VA means into the OTHER:
-  ##   - site CMSEP : how uncertain a_j estimates make z_i estimates uncertain
-  ##   - species CMSEP : how uncertain z_i estimates make a_j estimates uncertain
-  ##
-  ## Using the implicit-function-theorem derivative
-  ##   dz_i / da_j = -H_{uu}^{-1} H_{ua}
-  ## and treating a_j posterior variance as diag(A_lv):
-  ##   Var_correction(z_i) = D_u * H_{u,a} * diag(A_lv_vec) * H_{a,u} * D_u
+  incla_u <- pnms == "u"         # n*d_va_z entries
+  incla_a <- pnms == "a_lv_sp"   # p*d_va_a entries
 
-  incla_u <- pnms == "u"         # n*d params
-  incla_a <- pnms == "a_lv_sp"   # p*d params
+  ## VA dims from the actual Hessian block sizes, not from fit$num.lv
+  ## (fit$num.lv is unconstrained-only; d_va_z includes constrained dims too)
+  d_va_z <- if (any(incla_u)) sum(incla_u) %/% n else 0L
+  d_va_a <- if (any(incla_a)) sum(incla_a) %/% p else 0L
 
-  ## ---- CMSEP correction for site scores: uncertainty from a_j estimates ----
-  if (any(incla_u) && any(incla_a)) {
+  ## In HO both z_i and a_j are random VA effects; the meaningful CMSEPf correction
+  ## propagates uncertainty in ONE set of VA means into the OTHER via
+  ##   Var_correction(z_i) = H_{uu}^{-1} H_{ua} diag(A_lv) H_{au} H_{uu}^{-1}
+
+  ## ---- CMSEP correction for site scores (n x d_va_z) ----
+  if (d_va_z > 0L && d_va_a > 0L) {
     D_u  <- tryCatch(solve(H[incla_u, incla_u, drop = FALSE]),
                      error = function(e) MASS::ginv(H[incla_u, incla_u, drop = FALSE]))
-    H_ua <- H[incla_u, incla_a, drop = FALSE]   # (n*d) x (p*d)
-    ## Scale columns by sqrt(A_lv) to form D_u * H_ua * diag(A_lv) * H_ua' * D_u
-    A_lv_vec <- as.vector(if (!is.null(fit$A_lv_diag)) fit$A_lv_diag else fit$A_lv)  # p*d
-    Bw_u <- H_ua * rep(sqrt(pmax(A_lv_vec, 0)), each = sum(incla_u))  # (n*d) x (p*d)
+    H_ua <- H[incla_u, incla_a, drop = FALSE]
+    A_lv_vec <- as.vector(.ho_diag(fit$B))   # p * d_va_a
+    Bw_u  <- H_ua * rep(sqrt(pmax(A_lv_vec, 0)), each = n * d_va_z)
     diag_u <- base::diag(D_u %*% tcrossprod(Bw_u) %*% t(D_u))
-    A_sites <- matrix(0, n, d)
-    for (k in seq_len(d)) A_sites[, k] <- diag_u[(k - 1L)*n + seq_len(n)]
+    A_sites <- matrix(0, n, d_va_z)
+    for (k in seq_len(d_va_z)) A_sites[, k] <- diag_u[(k - 1L)*n + seq_len(n)]
   } else {
-    A_sites <- matrix(0, n, d)
+    A_sites <- matrix(0, n, max(d_va_z, 1L))
   }
 
-  ## ---- CMSEP correction for species loadings: uncertainty from z_i estimates
-  if (any(incla_a) && any(incla_u)) {
+  ## ---- CMSEP correction for species loadings (p x d_va_a) ----
+  if (d_va_a > 0L && d_va_z > 0L) {
     D_a  <- tryCatch(solve(H[incla_a, incla_a, drop = FALSE]),
                      error = function(e) MASS::ginv(H[incla_a, incla_a, drop = FALSE]))
-    H_au <- H[incla_a, incla_u, drop = FALSE]   # (p*d) x (n*d)
-    A_u_vec <- as.vector(if (!is.null(fit$A_diag)) fit$A_diag else fit$A)  # n*d
-    Bw_a <- H_au * rep(sqrt(pmax(A_u_vec, 0)), each = sum(incla_a))  # (p*d) x (n*d)
+    H_au <- H[incla_a, incla_u, drop = FALSE]
+    A_u_vec <- as.vector(.ho_diag(fit$A))    # n * d_va_z
+    Bw_a  <- H_au * rep(sqrt(pmax(A_u_vec, 0)), each = p * d_va_a)
     diag_a <- base::diag(D_a %*% tcrossprod(Bw_a) %*% t(D_a))
-    A_species <- matrix(0, p, d)
-    for (k in seq_len(d)) A_species[, k] <- diag_a[(k - 1L)*p + seq_len(p)]
+    A_species <- matrix(0, p, d_va_a)
+    for (k in seq_len(d_va_a)) A_species[, k] <- diag_a[(k - 1L)*p + seq_len(p)]
   } else {
-    A_species <- matrix(0, p, d)
+    A_species <- matrix(0, p, max(d_va_a, 1L))
   }
 
-  list(A = A_sites, A_lv = A_species)
+  list(A = A_sites, A_lv = A_species, d_va_z = d_va_z, d_va_a = d_va_a)
 }
 
 #'@export getPredictErr.gllvmHO
 #'@method getPredictErr gllvmHO
 getPredictErr.gllvmHO <- function(object, CMSEP = TRUE, cov = FALSE, ...) {
-  d         <- object$num.lv
-  ## Use diagonal summaries regardless of VA.struct (n x d, p x d)
-  A_sites   <- if (!is.null(object$A_diag))    object$A_diag    else object$A
-  A_species <- if (!is.null(object$A_lv_diag)) object$A_lv_diag else object$A_lv
+  num.RR   <- object$num.RR
+  num.lvc  <- object$num.lv.c
+  num.lv   <- object$num.lv   # unconstrained
+  d_total  <- num.RR + num.lvc + num.lv
+  Kz       <- if (!is.null(object$lv.X)) ncol(as.matrix(object$lv.X)) else 0L
+  Kt       <- if (!is.null(object$TR))   ncol(as.matrix(object$TR))   else 0L
+  n        <- nrow(object$y)
+  p        <- ncol(object$y)
+
+  ## VA dims per block.
+  ## When Kz > 0, RR z is deterministic (no VA residual); VA covers only lvc+lv dims,
+  ## which start at HO col num.RR+1.  When Kz == 0, all dims are VA starting at col 1.
+  ## The unified formula ho_idx = seq(d_total - d_va + 1, d_total) handles both cases.
+  d_va_z   <- ncol(.ho_diag(object$A))
+  d_va_a   <- ncol(.ho_diag(object$B))
+
+  ## Pad VA variances into full d_total HO-order matrices (0 for deterministic dims)
+  A_sites_full   <- matrix(0.0, n, d_total)
+  A_species_full <- matrix(0.0, p, d_total)
+  if (d_va_z > 0L) {
+    ho_idx_z <- seq(d_total - d_va_z + 1L, d_total)
+    A_sites_full[, ho_idx_z] <- .ho_diag(object$A)
+  }
+  if (d_va_a > 0L) {
+    ho_idx_a <- seq(d_total - d_va_a + 1L, d_total)
+    A_species_full[, ho_idx_a] <- .ho_diag(object$B)
+  }
 
   if (CMSEP) {
     if (!is.null(object$Hess)) {
-      sdb       <- CMSEPf_HO(object)
-      A_sites   <- A_sites   + sdb$A
-      A_species <- A_species + sdb$A_lv
+      sdb <- CMSEPf_HO(object)
+      if (d_va_z > 0L && sdb$d_va_z > 0L)
+        A_sites_full[, ho_idx_z]   <- A_sites_full[, ho_idx_z]   + sdb$A[, seq_len(d_va_z), drop = FALSE]
+      if (d_va_a > 0L && sdb$d_va_a > 0L)
+        A_species_full[, ho_idx_a] <- A_species_full[, ho_idx_a] + sdb$A_lv[, seq_len(d_va_a), drop = FALSE]
     } else {
       warning("No Hessian in gllvmHO fit; using VA variances only (CMSEP skipped).")
     }
   }
 
+  ## Add b_z VA covariance contribution: Var(z_il) += x_i^T Ab.lv[l,,] x_i
+  ## b_z dims follow HO order (RR first, then lvc), so ho_col = l for all l = 1..d_c.
+  ## RR dims have zero VA residual but non-zero b_z variance; lvc dims accumulate both.
+  d_active <- num.RR + num.lvc
+  if (!is.null(object$Ab.lv) && Kz > 0L && d_active > 0L) {
+    lv_X_mat <- as.matrix(object$lv.X)
+    d_c <- dim(object$Ab.lv)[1L]
+    for (l in seq_len(d_c)) {
+      cov_l   <- object$Ab.lv[l, , , drop = FALSE]
+      dim(cov_l) <- c(Kz, Kz)
+      for (i in seq_len(n)) {
+        xi <- lv_X_mat[i, , drop = FALSE]
+        A_sites_full[i, l] <- A_sites_full[i, l] + as.numeric(xi %*% cov_l %*% t(xi))
+      }
+    }
+  }
+  ## Add b_gamma VA covariance contribution: Var(gamma_jl) += t_j^T Ab.load[l,,] t_j
+  if (!is.null(object$Ab.load) && Kt > 0L && d_active > 0L) {
+    TR_mat <- as.matrix(object$TR)
+    d_t <- dim(object$Ab.load)[1L]
+    for (l in seq_len(d_t)) {
+      cov_l   <- object$Ab.load[l, , , drop = FALSE]
+      dim(cov_l) <- c(Kt, Kt)
+      for (j in seq_len(p)) {
+        tj <- TR_mat[j, , drop = FALSE]
+        A_species_full[j, l] <- A_species_full[j, l] + as.numeric(tj %*% cov_l %*% t(tj))
+      }
+    }
+  }
+
   out <- list()
   if (cov) {
-    out$lvs      <- lapply(seq_len(nrow(A_sites)),
-                           function(i) diag(A_sites[i, ],   d))
-    out$loadings <- lapply(seq_len(nrow(A_species)),
-                           function(j) diag(A_species[j, ], d))
+    out$lvs      <- lapply(seq_len(n), function(i) diag(A_sites_full[i, ],   d_total))
+    out$loadings <- lapply(seq_len(p), function(j) diag(A_species_full[j, ], d_total))
   } else {
-    out$lvs      <- sqrt(A_sites)    # n x d  SDs for site scores
-    out$loadings <- sqrt(A_species)  # p x d  SDs for species loadings
+    out$lvs      <- sqrt(A_sites_full)    # n × d_total SDs
+    out$loadings <- sqrt(A_species_full)  # p × d_total SDs
   }
   out
 }

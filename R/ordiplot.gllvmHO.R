@@ -106,8 +106,9 @@ ordiplot.gllvmHO <- function(object,
 
   n <- nrow(object$y)
   p <- ncol(object$y)
-  ## lvs.full is n × d (full padded, HO [RR|lvc|lv] order)
-  d <- ncol(object$lvs.full)
+  d <- as.integer(object$num.RR %||% 0L) +
+       as.integer(object$num.lv.c %||% 0L) +
+       as.integer(object$num.lv %||% 0L)
   if (d < 1L) stop("No latent variables in model.")
 
   num.RR  <- if (!is.null(object$num.RR))  as.integer(object$num.RR)  else 0L
@@ -117,15 +118,16 @@ ordiplot.gllvmHO <- function(object,
   Kz <- if (!is.null(object$lv.X)) ncol(as.matrix(object$lv.X)) else 0L
   Kt <- if (!is.null(object$TR))   ncol(as.matrix(object$TR))   else 0L
 
-  rr_det <- num.RR > 0L && Kz > 0L
+  rr_det  <- num.RR > 0L && Kz > 0L
+  lvc_det <- num.lvc > 0L && Kz > 0L   # concurrent dims with covariate structure
 
   sigma <- object$params$sigma.lv   # length d, ordered desc
 
   ## --- Determine plot type --------------------------------------------------
   if (is.null(type)) {
-    if (rr_det && (num.lvc + num.lv) > 0L) {
+    if ((rr_det || lvc_det) && (num.lvc + num.lv) > 0L && !(rr_det || lvc_det)) {
       type <- "conditional"
-    } else if (rr_det) {
+    } else if (rr_det && (num.lvc + num.lv) == 0L) {
       type <- "marginal"
     } else {
       type <- "conditional"
@@ -133,27 +135,88 @@ ordiplot.gllvmHO <- function(object,
   }
   type <- match.arg(type, c("conditional", "residual", "marginal"))
 
-  if (type == "marginal" && !rr_det)
-    stop("type = 'marginal' requires num.RR > 0 and X covariates.")
+  if (type == "marginal" && !(rr_det || lvc_det))
+    stop("type = 'marginal' requires X covariates (lv.X) with RR or lvc dims.")
   if (type == "residual" && (num.lvc + num.lv) == 0L)
     stop("type = 'residual' requires at least one VA (lv.c or lv) dimension.")
 
-  ## --- Select columns from lvs.full (HO [RR|lvc|lv] order) ------------------
-  if (type == "marginal") {
-    col_idx   <- seq_len(num.RR)
-  } else if (type == "residual") {
-    col_idx   <- seq(num.RR + 1L, d)
-  } else {
-    col_idx   <- seq_len(d)
+  ## --- Reconstruct full unscaled z in HO [RR|lvc|lv] order on the fly -------
+  lv_X    <- if (!is.null(object$lv.X.design)) as.matrix(object$lv.X.design) else NULL
+  rr_va_z <- if (Kz > 0L) 0L else num.RR
+  lvxc    <- object$params$LvXcoef
+  loadings_ho <- getLoadings(object)   # p x d, HO [RR|lvc|lv] order
+
+  .ho_z_full <- function() {
+    ## Returns n x d unscaled z in HO order from stored u_hat (object$lvs)
+    z <- matrix(0.0, n, d)
+    if (num.RR > 0L) {
+      if (Kz > 0L && !is.null(lvxc) && !is.null(lv_X)) {
+        b_z_rr <- sweep(lvxc[, num.lvc + seq_len(num.RR), drop = FALSE],
+                        2L, sigma[seq_len(num.RR)], `/`)
+        z[, seq_len(num.RR)] <- lv_X %*% b_z_rr
+      } else {
+        z[, seq_len(num.RR)] <- object$lvs[, seq_len(num.RR), drop = FALSE]
+      }
+    }
+    if (num.lvc > 0L)
+      z[, num.RR + seq_len(num.lvc)] <-
+        object$lvs[, rr_va_z + seq_len(num.lvc), drop = FALSE]
+    if (num.lv > 0L)
+      z[, num.RR + num.lvc + seq_len(num.lv)] <-
+        object$lvs[, rr_va_z + num.lvc + seq_len(num.lv), drop = FALSE]
+    z
   }
-  sigma_sel <- sigma[col_idx]
 
-  d_sel <- length(col_idx)
+  ## --- Build site scores and loadings for selected type ---------------------
+  if (type == "conditional") {
+    lv_sel    <- .ho_z_full()
+    theta_sel <- loadings_ho
+    sigma_sel <- sigma
+    col_idx   <- seq_len(d)
+
+  } else if (type == "marginal") {
+    ## Covariate-driven scores: z = lv.X * b_z (deterministic part only)
+    z_full <- .ho_z_full()
+    rr_scores  <- if (num.RR > 0L) z_full[, seq_len(num.RR), drop = FALSE] else NULL
+    lvc_scores <- if (num.lvc > 0L) {
+      ## lv.X * b_z = full z - residual u_hat
+      lvc_full   <- z_full[, num.RR + seq_len(num.lvc), drop = FALSE]
+      ## subtract the VA residual (u_hat - lv.X*b_z) to recover lv.X*b_z
+      iz_lvc     <- rr_va_z + seq_len(num.lvc)
+      resid_part <- if (Kz > 0L && !is.null(lvxc) && !is.null(lv_X)) {
+        b_z_lvc <- sweep(lvxc[, seq_len(num.lvc), drop = FALSE],
+                         2L, sigma[num.RR + seq_len(num.lvc)], `/`)
+        object$lvs[, iz_lvc, drop = FALSE] - lv_X %*% b_z_lvc
+      } else {
+        matrix(0.0, n, num.lvc)
+      }
+      lvc_full - resid_part
+    } else NULL
+
+    lv_sel    <- cbind(rr_scores, lvc_scores)
+    col_ho    <- c(if (num.RR > 0L)  seq_len(num.RR) else NULL,
+                   if (num.lvc > 0L) num.RR + seq_len(num.lvc) else NULL)
+    theta_sel <- loadings_ho[, col_ho, drop = FALSE]
+    sigma_sel <- sigma[col_ho]
+    col_idx   <- col_ho
+
+  } else {
+    ## type == "residual": VA random part (lvc residual + lv)
+    ## Use getLV to get sigma-scaled residuals, then unscale for alpha distribution
+    sigma_va <- sigma[c(if (num.lvc > 0L) num.RR + seq_len(num.lvc) else NULL,
+                        if (num.lv  > 0L) num.RR + num.lvc + seq_len(num.lv) else NULL)]
+    lv_res   <- getLV(object, type = "residual")  # sigma-scaled, std [lvc|lv]
+    ## unscale so the alpha sweep below applies cleanly
+    lv_sel   <- sweep(lv_res, 2L, sigma_va, `/`)
+    col_ho   <- c(if (num.lvc > 0L) num.RR + seq_len(num.lvc) else NULL,
+                  if (num.lv  > 0L) num.RR + num.lvc + seq_len(num.lv) else NULL)
+    theta_sel <- loadings_ho[, col_ho, drop = FALSE]
+    sigma_sel <- sigma[col_ho]
+    col_idx   <- col_ho
+  }
+
+  d_sel <- ncol(lv_sel)
   if (d_sel < 1L) stop("No ordination dimensions selected for type = '", type, "'.")
-
-  ## lvs.full contains unscaled z; loadings contains unscaled gamma (both HO order)
-  lv_sel    <- object$lvs.full[, col_idx, drop = FALSE]   # n x d_sel
-  theta_sel <- object$loadings[, col_idx, drop = FALSE]   # p x d_sel
 
   ## --- which.lvs ------------------------------------------------------------
   if (length(which.lvs) == 1L) which.lvs <- c(which.lvs, which.lvs)
@@ -165,10 +228,9 @@ ordiplot.gllvmHO <- function(object,
   lv    <- sweep(lv_sel,    2L, sigma_sel^alpha,       `*`)
   theta <- sweep(theta_sel, 2L, sigma_sel^(1 - alpha), `*`)
 
-  spp_names <- rownames(object$loadings)
+  spp_names <- colnames(object$y)
   if (is.null(spp_names))
-    spp_names <- if (!is.null(colnames(object$y))) colnames(object$y) else
-      paste0("sp", seq_len(p))
+    spp_names <- rownames(object$params$theta) %||% paste0("sp", seq_len(p))
   if (!is.null(ind.spp)) ind.spp <- min(p, ind.spp) else ind.spp <- p
 
   if (length(spp.colors) == 1L) spp.colors <- rep(spp.colors, p)
@@ -220,12 +282,28 @@ ordiplot.gllvmHO <- function(object,
   plotfun <- if (("ylim" %in% names(gr_par_list)) || ("xlim" %in% names(gr_par_list)))
     plot else MASS::eqscplot
 
-  if (is.null(main))
-    main <- if (d_sel == 1L) "Hierarchical ordination" else
-      paste0("Hierarchical ordination (type = '", type, "')")
+  if (is.null(main)) {
+    ## Title reflects the ordination type:
+    ##   num.lv.c > 0                           → Hierarchical ordination
+    ##   num.RR > 0, both lv.X and TR present   → Double constrained ordination
+    ##   num.RR > 0, only lv.X or only TR       → Constrained ordination
+    has_lvc <- (object$num.lv.c %||% 0L) > 0L
+    has_rr  <- (object$num.RR   %||% 0L) > 0L
+    double  <- has_rr && !has_lvc &&
+               !is.null(object$lv.X.design) && !is.null(object$TR)
+    ord_label <- if (has_lvc)   "Hierarchical ordination"
+                 else if (double) "Double constrained ordination"
+                 else             "Constrained ordination"
+    main <- if (d_sel == 1L) ord_label else
+      paste0(ord_label, " (type = '", type, "')")
+  }
 
-  xlab_base <- if (type == "marginal") "Constrained axis" else "LV"
-  site_labs <- rownames(object$lvs.full) %||% as.character(seq_len(n))
+  xlab_base <- switch(type,
+    marginal  = "Constrained axis",
+    residual  = "Residual LV",
+    "LV"
+  )
+  site_labs <- rownames(object$y) %||% rownames(object$lvs) %||% as.character(seq_len(n))
 
   if (d_sel == 1L) {
     plotfun(seq_len(n), lv_sc[, 1L],
@@ -243,7 +321,7 @@ ordiplot.gllvmHO <- function(object,
   ## Axis limits: include species when biplot is active so loadings don't fall off.
   ## b_gamma arrows are always drawn (like b_z) so include their scale-contribution
   ## in the range even when biplot=FALSE.
-  has_bgamma_arrows <- !is.null(object$params$b_gamma) && type != "residual"
+  has_bgamma_arrows <- !is.null(object$params$LoadTRcoef) && type != "residual"
   range_pts <- lv_sc[, c(xl, yl), drop = FALSE]
   if (show_spp)
     range_pts <- rbind(range_pts, th_sc[seq_len(ind.spp), c(xl, yl), drop = FALSE])
@@ -344,8 +422,20 @@ ordiplot.gllvmHO <- function(object,
   }
 
   ## --- b_z arrows (canonical covariates) -----------------------------------
-  if (!is.null(object$params$b_z) && type != "residual") {
-    b_z_full <- object$params$b_z   # Kz x d (HO order)
+  if (!is.null(object$params$LvXcoef) && type != "residual") {
+    ## Reconstruct unscaled b_z in HO [RR|lvc|lv] order from LvXcoef
+    ## LvXcoef is Kz x d_c, standard [lvc|RR] order, sigma-scaled
+    d_c  <- num.RR + num.lvc
+    lvxc <- object$params$LvXcoef
+    b_z_full <- matrix(0, nrow(lvxc), d, dimnames = list(rownames(lvxc), NULL))
+    if (num.lvc > 0L)
+      b_z_full[, num.RR + seq_len(num.lvc)] <-
+        sweep(lvxc[, seq_len(num.lvc), drop = FALSE],
+              2L, sigma[num.RR + seq_len(num.lvc)], `/`)
+    if (num.RR > 0L)
+      b_z_full[, seq_len(num.RR)] <-
+        sweep(lvxc[, num.lvc + seq_len(num.RR), drop = FALSE],
+              2L, sigma[seq_len(num.RR)], `/`)
     if (ncol(b_z_full) >= max(col_idx)) {
       bz_sel <- b_z_full[, col_idx, drop = FALSE]
       bz_sel <- sweep(bz_sel, 2L, sigma_sel^alpha, `*`)
@@ -377,8 +467,8 @@ ordiplot.gllvmHO <- function(object,
   }
 
   ## --- b_gamma arrows (traits) — shown by default, same as b_z arrows ------
-  if (!is.null(object$params$b_gamma) && type != "residual") {
-    b_gamma_full <- object$params$b_gamma   # Kt x d (HO order)
+  if (!is.null(object$params$LoadTRcoef) && type != "residual") {
+    b_gamma_full <- object$params$LoadTRcoef   # Kt x d (HO order), same as LoadTRcoef
     if (ncol(b_gamma_full) >= max(col_idx)) {
       bg_sel <- b_gamma_full[, col_idx, drop = FALSE]
       bg_sel <- sweep(bg_sel, 2L, sigma_sel^(1 - alpha), `*`)
@@ -396,8 +486,8 @@ ordiplot.gllvmHO <- function(object,
 
       sig_bg <- NULL
       if (arrow.ci && !isFALSE(object$sd) &&
-          !is.null(object$sd) && !is.null(object$sd$b_gamma)) {
-        se_bg <- object$sd$b_gamma
+          !is.null(object$sd) && !is.null(object$sd$LoadTRcoef)) {
+        se_bg <- object$sd$LoadTRcoef
         if (ncol(se_bg) >= max(col_idx)) {
           bg_raw  <- b_gamma_full[, col_idx, drop = FALSE][, c(xl, yl), drop = FALSE]
           se_plot <- se_bg[,        col_idx, drop = FALSE][, c(xl, yl), drop = FALSE]

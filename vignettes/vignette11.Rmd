@@ -1,0 +1,158 @@
+---
+title: 'Predicting species richness with gllvm'
+author: "Bert van der Veen"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Predicting species richness with gllvm}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = FALSE)
+```
+
+Species richness predictions from joint species distribution models are rarely straightforward. Because latent variables absorb unexplained variation, including patterns that fixed effects have not been given the right shape to capture, marginal predictions (integrating over latent variables) can be misleading. This vignette demonstrates the issue and shows how to detect and resolve it using the alpine plant dataset.
+
+## Data
+
+The `alpine` dataset contains presence-absence records of 175 vascular plant species at 912 sites across a broad elevational gradient (410--3060 m) in the Swiss Alps, with eight environmental predictors.
+
+```{r data}
+library(gllvm)
+data(alpine)
+Y <- alpine$Y
+X <- alpine$X
+```
+
+We scale the predictors and fit a joint species distribution model (JSDM) with a linear elevation term and two latent variables.
+
+```{r scale}
+X_scaled <- as.data.frame(scale(X[, c("ELEV", "SLOPE", "DDEG0", "MIND", "SOLRAD")]))
+```
+
+## Fitting the model
+
+### Linear elevation term
+
+```{r fit_linear, cache=TRUE}
+model_lin <- gllvm(y = Y, X = X_scaled,
+                   formula = ~ ELEV,
+                   num.lv = 2,
+                   family = "binomial",
+                   seed = 1)
+```
+
+With only a linear term for elevation in the fixed effects, the model cannot capture a unimodal species richness response along the gradient. Latent variables may absorb the missing quadratic signal, leading to confounded marginal predictions.
+
+### Diagnosing confounding
+
+`predictSR` computes species richness predictions from the Poisson-Binomial distribution. Setting `newLV = matrix(0, ...)` fixes latent variables to zero, giving marginal predictions that reflect only the fixed-effects component:
+
+```{r confound}
+obs_sr  <- rowSums(Y)
+sr_full <- predictSR(model_lin, se.fit = FALSE)
+sr_marg <- predictSR(model_lin, se.fit = FALSE,
+                     newLV = matrix(0, ncol = model_lin$num.lv, nrow = nrow(Y)))
+```
+
+Dunn-Smyth quantile residuals from the Poisson-Binomial distribution reveal the problem:
+
+```{r resid_linear, fig.width=9, fig.height=3.5}
+res_marg <- residuals(sr_marg, model_lin)
+res_full <- residuals(sr_full, model_lin)
+
+par(mfrow = c(1, 3))
+plot(res_marg$fitted, res_marg$residuals,
+     xlab = "Expected SR", ylab = "Dunn-Smyth residuals", main = "Marginal")
+abline(h = 0, lty = 2)
+qqnorm(res_marg$residuals, main = "QQ (marginal)"); qqline(res_marg$residuals)
+plot(X_scaled$ELEV, res_marg$residuals,
+     xlab = "Elevation (scaled)", ylab = "Dunn-Smyth residuals",
+     main = "Marginal vs. elevation")
+abline(h = 0, lty = 2)
+```
+
+The arch pattern in the marginal residuals versus elevation is a clear diagnostic: the linear elevation term has left a systematic quadratic signal in the residuals, and the latent variables have absorbed it. Marginal predictions are therefore systematically biased: too low at mid-elevations, too high at the extremes.
+
+The conditional residuals (using the estimated latent variables) appear flat, because the latent variables have already corrected for the missing quadratic:
+
+```{r resid_conditional, fig.width=9, fig.height=3.5}
+par(mfrow = c(1, 3))
+plot(res_full$fitted, res_full$residuals,
+     xlab = "Expected SR", ylab = "Dunn-Smyth residuals", main = "Conditional")
+abline(h = 0, lty = 2)
+qqnorm(res_full$residuals, main = "QQ (conditional)"); qqline(res_full$residuals)
+plot(X_scaled$ELEV, res_full$residuals,
+     xlab = "Elevation (scaled)", ylab = "Dunn-Smyth residuals",
+     main = "Conditional vs. elevation")
+abline(h = 0, lty = 2)
+```
+
+Good conditional diagnostics alongside bad marginal diagnostics indicate latent variable-covariate confounding, not a model failure.
+
+## Resolving confounding: quadratic elevation term
+
+Adding a quadratic elevation term gives the fixed effects enough flexibility to capture the unimodal response, freeing the latent variables for residual community structure.
+
+```{r fit_quad, cache=TRUE}
+model <- gllvm(y = Y, X = X_scaled,
+               formula = ~ ELEV + I(ELEV^2),
+               num.lv = 2,
+               family = "binomial",
+               seed = 1)
+```
+
+### Diagnostic plots
+
+`plot.predictSR.gllvm` produces residual diagnostics. The `covariate` argument adds residual-versus-covariate panels for named predictors in `model$X`:
+
+```{r resid_quad, fig.width=9, fig.height=3.5}
+sr <- predictSR(model, se.fit = FALSE)
+plot(sr, model, covariate = "ELEV")
+```
+
+Both the Pearson residuals versus fitted values and the residuals versus elevation should now be free of systematic patterns.
+
+## Calibration: marginal species richness predictions
+
+With confounding resolved, marginal predictions along an elevation gradient are reliable. We supply `newX` with the quadratic term and fix latent variables to zero to obtain marginal predictions with uncertainty:
+
+```{r predict, fig.width=6.5, fig.height=4.5, cache=TRUE}
+elev_seq <- seq(min(X_scaled$ELEV), max(X_scaled$ELEV), length.out = 100)
+newX     <- data.frame(ELEV = elev_seq)
+
+srnew <- predictSR(model, newX = newX, se.fit = 200,
+                   newLV = matrix(0, ncol = model$num.lv, nrow = nrow(newX)))
+
+plot(X_scaled$ELEV, obs_sr, pch = 16, col = rgb(0, 0, 0, 0.3),
+     xlab = "Elevation (scaled)", ylab = "Species richness",
+     ylim = c(0, max(obs_sr, srnew$expected$upper, na.rm = TRUE) + 5))
+polygon(c(elev_seq, rev(elev_seq)),
+        c(srnew$expected$lower, rev(srnew$expected$upper)),
+        col = rgb(0.7, 0, 0, 0.15), border = NA)
+abline(h = ncol(Y), lty = 3, col = "gray50")
+lines(elev_seq, srnew$expected$fit, col = "firebrick", lwd = 2)
+legend("topright",
+       legend = c("Observed", "Predicted (95% CI)", "Species pool"),
+       pch = c(16, NA, NA), lty = c(NA, 1, 3),
+       col = c(rgb(0, 0, 0, 0.3), "firebrick", "gray50"), bty = "n")
+```
+
+The peak in predicted species richness occurs at intermediate elevations, consistent with the mid-domain effect and the unimodal occurrence patterns of alpine plants. The 95% CI from the parametric bootstrap (`se.fit = 200` draws) reflects uncertainty in the marginal expectation across latent variable values.
+
+## Summary
+
+The key workflow for reliable species richness prediction from a JSDM:
+
+1. Fit a model with sensible fixed effects for the gradient of interest.
+2. Compare marginal and conditional Dunn-Smyth residuals versus predictors. An arch in marginal residuals that disappears conditionally signals latent variable-covariate confounding.
+3. Extend the fixed-effects formula (quadratic or other terms) until marginal residuals are flat.
+4. Use `predictSR` with `newLV = matrix(0, ...)` for marginal predictions along the gradient.
+
+## References
+
+D'Amen, M., Mod, H. K., Gotelli, N. J. and Guisan, A. (2018). Disentangling biotic interactions, environmental filters, and dispersal limitation as drivers of species co-occurrence. *Ecography*, 41(8), 1233--1244. <https://doi.org/10.1111/ecog.03148>
+
+van der Veen, B., Hui, F. K. C., Hovstad, K. A., Solbu, E. B. and O'Hara, R. B. (2021). Model-based ordination for species with unequal niche widths. *Methods in Ecology and Evolution*, 12(7), 1288--1300. <https://doi.org/10.1111/2041-210X.13595>

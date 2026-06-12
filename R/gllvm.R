@@ -684,8 +684,8 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
     # For tweedie & optim, optim.method always "L-BFGS-B"
     if(is.null(optim.method) && optimizer == "optim") optim.method <- ifelse(any(family == "tweedie"), "L-BFGS-B", "BFGS")
     
-    if(!isTRUE(random.loadings) && (!is.null(TR)&num.lv.c>0|!is.null(TR)&num.RR>0)){
-      stop("Cannot fit model with traits and reduced rank predictors. \n")
+    if(!isTRUE(random.loadings) && !is.null(TR) && (num.lv.c>0 || num.RR>0)){
+      random.loadings <- TRUE
     }
     
     if(!is.null(start.fit)){
@@ -1623,7 +1623,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
 
       sp <- NULL
       if (!is.null(start.fit) && inherits(start.fit, "gllvmHO"))
-        sp <- list(lvs = start.fit$lvs, loadings = start.fit$loadings)
+        sp <- list(lvs = start.fit$lvs, loadings = getLoadings(start.fit))
       else if (!is.null(start.lvs))
         sp <- list(lvs = start.lvs)
       ## Compute the original (unconstrained) num.lv before it was summed into ho_d
@@ -1639,12 +1639,15 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
         num.RR       = as.integer(num.RR),
         offset       = if (prod(dim(O)) > 1) O else NULL,
         Ntrials      = Ntrials,
-        row.eff      = row.eff,
+        row.eff      = row.eff.formula,
         studyDesign  = studyDesign,
         Lambda.struc = Lambda.struc,
         zeta.struc   = zeta.struc,
         maxit        = maxit,
         reltol       = reltol,
+        reltol.c     = reltol.c,
+        optimizer    = optimizer,
+        optim.method = optim.method,
         diag.iter    = diag.iter,
         trace        = isTRUE(trace),
         start.params = sp,
@@ -1653,8 +1656,18 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
         seed         = seed,
         starting.val = starting.val,
         jitter.var   = jitter.var,
+        randomB      = if (isFALSE(randomB) && !is.null(ho_lv_X)) "LV" else randomB,
+        randomT      = if (isTRUE(random.loadings)) "LV" else FALSE,
         csb_z        = csb_z_mat,
         csb_gamma    = csb_gamma_mat,
+        # pre-computed row effect data (computed above before this dispatch)
+        xr_pre       = xr,
+        dr_pre       = dr,
+        trmsize_pre  = trmsize,
+        cstruc_pre   = cstruc,
+        csR_pre      = csR,
+        proptoMats_pre = proptoMats,
+        dist_pre     = dist,
         model        = "gllvm.HO.TMB"
       )
       out$call <- match.call()

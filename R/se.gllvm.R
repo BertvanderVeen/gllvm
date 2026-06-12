@@ -1142,17 +1142,16 @@ se <- function(object, ...)
   for (nm in c("ePower"))
     incl[names(objrFinal$par) == nm] <- FALSE
 
-  ## sigmaLV ordering increments: sigma(k) = sigma(k+1) + exp(sigmaLV(k)).
-  ## When sigmaLV(k) is very negative (< -10) the increment is effectively zero
-  ## and the parameter is on the ordering boundary — its Hessian contribution
-  ## is negligible; exclude to avoid a negative-variance artefact.
+  ## sigmaLV reparameterisation: sigma(0) = exp(sigmaLV(0)),
+  ## sigma(k) = sigma(k-1)*exp(-exp(sigmaLV(k))) for k >= 1.
+  ## sigmaLV(k) << 0  =>  ratio -> 1  (equal consecutive sigmas, ordering boundary)
+  ## sigmaLV(k) >> 0  =>  ratio -> 0  (axis k collapses, degenerate)
+  ## Both cases yield near-zero Hessian entries; exclude to avoid negative-variance artefacts.
   slv_idx     <- which(names(objrFinal$par) == "sigmaLV")
   slv_val     <- objrFinal$par[slv_idx]
   on_boundary <- integer(0)
-  ## All but the last sigmaLV entry are ordering increments; the last is log(sigma_min).
-  ## An increment with value << 0 means sigma[k] ≈ sigma[k+1] — ordering boundary.
   if (length(slv_idx) > 1L) {
-    on_boundary <- slv_idx[-length(slv_idx)][slv_val[-length(slv_val)] < -10]
+    on_boundary <- slv_idx[-1L][abs(slv_val[-1L]) > 10]
     incl[on_boundary]  <- FALSE
     incld[on_boundary] <- FALSE
   }
@@ -1166,9 +1165,8 @@ se <- function(object, ...)
                        "exponential", "ZINB", "ZNIB", "ZIB", "ZNIB")))
     incl[names(objrFinal$par) == "lg_phi"] <- FALSE
 
-  has_random_re <- !isFALSE(object$row.eff) && inherits(object$row.eff, "formula") &&
-                   lme4::anyBars(object$row.eff)
-  has_fixed_re  <- !isFALSE(object$row.eff) && !has_random_re
+  has_random_re <- !is.null(object$params$row.params.random)
+  has_fixed_re  <- !is.null(object$params$row.params.fixed)
   if (!has_fixed_re)  incl[names(objrFinal$par) == "r0f"]      <- FALSE
   if (!has_random_re) incl[names(objrFinal$par) == "log_sigma"] <- FALSE
 
@@ -1291,14 +1289,72 @@ se <- function(object, ...)
     names(out$sd$sigma.bgamma) <- paste0("LV", seq_len(d_t_eff))
   }
 
+  ## Row effect SEs — mirrors se.gllvm lines 379-440
+  if (has_fixed_re && !is.null(se_lst$r0f)) {
+    se_r0f <- as.vector(se_lst$r0f)
+    names(se_r0f) <- names(object$params$row.params.fixed)
+    out$sd$row.params.fixed <- se_r0f
+  }
+
+  if (has_random_re && !is.null(se_lst$log_sigma) && !is.null(object$params$sigma)) {
+    sigma_se <- se_lst$log_sigma
+    if (!is.null(objrFinal$env$map$log_sigma)) {
+      sigma_se <- sigma_se[!duplicated(objrFinal$env$map$log_sigma) &
+                           !is.na(objrFinal$env$map$log_sigma)]
+    }
+    cstrucn_re <- as.integer(objrFinal$env$data$cstruc)
+    trmsize_re <- objrFinal$env$data$trmsize
+    sig_par    <- object$params$sigma
+    iter       <- 1L
+    for (re in seq_along(cstrucn_re)) {
+      cd   <- cstrucn_re[re]
+      lhs  <- trmsize_re[1, re]
+      if (cd %in% c(0L, -1L, 5L, 6L)) {           # diag, ustruc, propto, proptoustruc
+        sigma_se[iter:(iter + lhs - 1L)] <- sigma_se[iter:(iter + lhs - 1L)] *
+                                            sig_par[iter:(iter + lhs - 1L)]
+        iter <- iter + lhs
+      } else if (cd %in% c(1L, 3L)) {              # corAR1, corCS: SD + rho
+        sigma_se[iter]        <- sigma_se[iter] * sig_par[iter]
+        sigma_se[iter + 1L]   <- sigma_se[iter + 1L] * (1 - sig_par[iter + 1L]^2)^1.5
+        iter <- iter + 2L
+      } else if (cd == 2L) {                        # corExp: scale + range
+        sigma_se[iter:(iter + 1L)] <- sigma_se[iter:(iter + 1L)] * sig_par[iter:(iter + 1L)]
+        iter <- iter + 2L
+      } else if (cd == 4L) {                        # corMatern: scale + range (kappa fixed)
+        sigma_se[iter:(iter + 1L)] <- sigma_se[iter:(iter + 1L)] * sig_par[iter:(iter + 1L)]
+        iter <- iter + 3L   # skip fixed kappa entry
+      } else if (cd %in% c(7L, 9L)) {              # corAR1ustruc, corCSustruc: + rho
+        sigma_se[iter:(iter + lhs - 1L)] <- sigma_se[iter:(iter + lhs - 1L)] *
+                                            sig_par[iter:(iter + lhs - 1L)]
+        iter <- iter + lhs
+        sigma_se[iter] <- sigma_se[iter] * (1 - sig_par[iter]^2)^1.5
+        iter <- iter + 1L
+      } else if (cd %in% c(8L, 10L)) {             # corExpustruc, corMaternustruc: + scale
+        sigma_se[iter:(iter + lhs - 1L)] <- sigma_se[iter:(iter + lhs - 1L)] *
+                                            sig_par[iter:(iter + lhs - 1L)]
+        iter <- iter + lhs
+        sigma_se[iter] <- sigma_se[iter] * sig_par[iter]
+        iter <- iter + if (cd == 10L) 2L else 1L   # corMaternustruc skips fixed kappa
+      }
+    }
+    out$sd$sigma <- sigma_se[seq_len(iter - 1L)]
+  }
+
   ## Prediction errors from VA covariances: sqrt of diagonal of A_i / A_j
-  out$prediction.errors$lvs      <- sqrt(object$A_diag)     # n x d
-  out$prediction.errors$loadings <- sqrt(object$A_lv_diag)  # p x d
+  out$prediction.errors$lvs      <- sqrt(.ho_diag(object$A))  # n x d
+  out$prediction.errors$loadings <- sqrt(.ho_diag(object$B))  # p x d
+
+  ## Prediction errors for random row effects: diagonal of row-effect VA cov (lg_Ar)
+  if (has_random_re) {
+    lg_Ar_hat <- objrFinal$par[names(objrFinal$par) == "lg_Ar"]
+    if (length(lg_Ar_hat) > 0)
+      out$prediction.errors$row.params <- as.list(exp(lg_Ar_hat))
+  }
 
   ## Prediction errors for b_z / b_gamma from diagonal of AB_z(l) AB_z(l)^T
   ## Ab_z layout: diagonal entries Ab_z[q*d_c + l] (0-indexed), q=0..Kz-1, l=0..d_c-1
-  if (!is.null(object$params$b_z) && !is.null(object$params$sigma.bz)) {
-    Kz    <- nrow(object$params$b_z)
+  if (!is.null(object$params$LvXcoef) && !is.null(object$params$sigma.bz)) {
+    Kz    <- nrow(object$params$LvXcoef)
     d_c   <- length(object$params$sigma.bz)
     Ab_z_hat <- objrFinal$par[names(objrFinal$par) == "Ab_z"]
     if (length(Ab_z_hat) >= Kz * d_c) {
@@ -1306,13 +1362,13 @@ se <- function(object, ...)
       for (l in seq_len(d_c))
         for (q in seq_len(Kz))
           pe_bz[q, l] <- exp(Ab_z_hat[(q - 1L) * d_c + l])
-      rownames(pe_bz) <- rownames(object$params$b_z)
+      rownames(pe_bz) <- rownames(object$params$LvXcoef)
       colnames(pe_bz) <- paste0("LV", seq_len(d_c))
       out$prediction.errors$b_z <- pe_bz
     }
   }
-  if (!is.null(object$params$b_gamma) && !is.null(object$params$sigma.bgamma)) {
-    Kt    <- nrow(object$params$b_gamma)
+  if (!is.null(object$params$LoadTRcoef) && !is.null(object$params$sigma.bgamma)) {
+    Kt    <- nrow(object$params$LoadTRcoef)
     d_t   <- length(object$params$sigma.bgamma)
     Ab_g_hat <- objrFinal$par[names(objrFinal$par) == "Ab_gamma"]
     if (length(Ab_g_hat) >= Kt * d_t) {
@@ -1320,9 +1376,9 @@ se <- function(object, ...)
       for (l in seq_len(d_t))
         for (q in seq_len(Kt))
           pe_bg[q, l] <- exp(Ab_g_hat[(q - 1L) * d_t + l])
-      rownames(pe_bg) <- rownames(object$params$b_gamma)
+      rownames(pe_bg) <- rownames(object$params$LoadTRcoef)
       colnames(pe_bg) <- paste0("LV", seq_len(d_t))
-      out$prediction.errors$b_gamma <- pe_bg
+      out$prediction.errors$LoadTRcoef <- pe_bg
     }
   }
 

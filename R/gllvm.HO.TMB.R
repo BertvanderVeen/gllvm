@@ -59,22 +59,25 @@ gllvm.HO.TMB <- function(
     Ntrials = matrix(1L), row.eff = FALSE, studyDesign = NULL,
     Lambda.struc = "unstructured", zeta.struc = "common",
     n.init = 1L, n.init.max = 10L,
-    maxit = 2000, reltol = 1e-8,
+    maxit = 2000, reltol = 1e-8, reltol.c = 1e-6,
+    optimizer = "NLOPT_LD_SLSQP", optim.method = "nlminb",
     diag.iter = 1, start.params = NULL, trace = FALSE, call. = NULL,
     starting.val = "res", jitter.var = 0,
     randomB = "LV", randomT = "LV",
-    csb_z = matrix(0L, 0L, 2L), csb_gamma = matrix(0L, 0L, 2L)
+    csb_z = matrix(0L, 0L, 2L), csb_gamma = matrix(0L, 0L, 2L),
+    formula.xb = NULL,   # n × spnr design matrix for species random slopes (NULL = unused)
+    # Pre-computed row effect data passed from gllvm.R (mirrors gllvm.TMB.R inputs)
+    xr_pre = NULL, dr_pre = NULL, trmsize_pre = NULL,
+    cstruc_pre = "diag", csR_pre = matrix(0L, 0, 2),
+    proptoMats_pre = list(list(matrix(0))), dist_pre = list(matrix(0))
 ) {
   .ensure_ho_dll()
 
   ## ---- validate randomB / randomT -----------------------------------------
-  if (!identical(randomB, "LV"))
-    stop("randomB = '", randomB, "' is not yet supported for HO models. ",
-         "Use randomB = 'LV'. Fixed canonical coefficients (randomB = FALSE) ",
-         "are planned but not yet implemented.")
-  if (!identical(randomT, "LV"))
-    stop("randomT = '", randomT, "' is not yet supported for HO models. ",
-         "Use randomT = 'LV'.")
+  if (!identical(randomB, "LV") && !isFALSE(randomB))
+    stop("randomB must be 'LV' or FALSE for HO models.")
+  if (!identical(randomT, "LV") && !isFALSE(randomT))
+    stop("randomT must be 'LV' or FALSE for HO models.")
 
   ## ---- dimensions & family setup ------------------------------------------
   n      <- nrow(y)
@@ -136,11 +139,12 @@ gllvm.HO.TMB <- function(
       sv$a_sp <- sv$a_sp + matrix(rnorm(p * d_va_a, sd = sqrt(jitter.var + 0.5)),
                                    p, d_va_a)
   } else {
-    ## "zero"
+    ## "zero": loadings initialised to 1 (not 0) so the bilinear gradient is
+    ## non-zero from the start; u stays at 0 and sigma(0)=exp(0)=1.
     sv <- list(
-      u      = matrix(0, n, d_va_z),
-      a_sp   = matrix(0, p, d_va_a),
-      beta0  = link_y$beta0,
+      u       = matrix(0, n, d_va_z),
+      a_sp    = matrix(1, p, d_va_a),
+      beta0   = link_y$beta0,
       sigmaLV = rep(0, d)
     )
   }
@@ -152,6 +156,22 @@ gllvm.HO.TMB <- function(
     if (d_va_a > 0L)
       sv$a_sp <- sv$a_sp + matrix(rnorm(p * d_va_a, sd = sqrt(jitter.var)),
                                     p, d_va_a)
+  }
+
+  ## Scale sigma_1 down when both lvc b_z and b_gamma are active.
+  ## The SVD singular values reflect the total variation in link(Y), which includes
+  ## variation that in the model is absorbed by b_z and b_gamma.  In particular,
+  ## lvc_z_var_i = x_i^T Var_q(b_z) x_i scales with ||x_i||^2 and
+  ## lvc_g_var_j = t_j^T Var_q(b_gamma) t_j scales with ||t_j||^2, so the bilinear
+  ## form integral (log-link ck = 1 - sigma^2 * u_z * v_g > 0) can be violated at
+  ## initial values when lv.X or TR are not standardised.
+  ## Dividing sigma by ||lv.X||_rms * ||TR||_rms ensures the initial ck > 0.
+  if (!is.null(lv.X) && (d_c - min(d_c, num.RR)) > 0L &&
+      !is.null(TR)   && (d_t - min(d_t, num.RR)) > 0L) {
+    lv_X_rms  <- sqrt(mean(rowSums(as.matrix(lv.X)^2)))
+    TR_rms    <- sqrt(mean(rowSums(as.matrix(TR)^2)))
+    scale_adj <- max(1, lv_X_rms * TR_rms)
+    sv$sigmaLV[1] <- sv$sigmaLV[1] - log(scale_adj)
   }
 
   if (!is.null(start.params)) {
@@ -205,71 +225,136 @@ gllvm.HO.TMB <- function(
     }))
   }
 
-  ## ---- row-effect setup ---------------------------------------------------
-  ## row.eff = FALSE/"none"    : no row effects
-  ## row.eff = "fixed"         : one fixed intercept per site (xr = I_n)
-  ## row.eff = "random"/TRUE   : i.i.d. random row effects (xrr = I_n)
-  ## row.eff = ~group          : fixed effect per group level
-  ## row.eff = ~(1|group)      : grouped random intercepts (one VA mean per group)
-  ## Mixed formula (fixed + random bars) also handled.
-  ## studyDesign: data.frame supplying grouping variables for formula row effects.
+  ## ---- row-effect setup (uses pre-computed data from gllvm.R) ----------------
+  ## gllvm.R has already parsed row.eff and built dr, trmsize, cstruc, csR,
+  ## proptoMats, xr before the HO dispatch; we receive them as *_pre arguments.
+  ## This mirrors gllvm.TMB.R exactly: same data inputs, same starting values.
 
-  ## Canonicalise non-formula strings
-  if (!inherits(row.eff, "formula")) {
-    if (isFALSE(row.eff) || identical(row.eff, "none")) {
-      row.eff <- FALSE
-    } else if (identical(row.eff, "fixed")) {
-      if (is.null(studyDesign))
-        studyDesign <- data.frame(sample = factor(seq_len(n)))
-      row.eff <- ~sample
-    } else if (isTRUE(row.eff) || identical(row.eff, "random")) {
-      if (is.null(studyDesign))
-        studyDesign <- data.frame(sample = factor(seq_len(n)))
-      row.eff <- ~(1|sample)
-    } else {
-      warning("Unrecognised row.eff value; row effects ignored.")
-      row.eff <- FALSE
+  xr  <- if (!is.null(xr_pre) && prod(dim(xr_pre)) > 0 && nrow(xr_pre) == n)
+           as.matrix(xr_pre) else matrix(0, 0, 0)
+  r0f <- if (nrow(xr) == n) matrix(0, ncol(xr), 1) else matrix(0, 0, 1)
+
+  dr       <- if (!is.null(dr_pre)) dr_pre else Matrix::sparseMatrix(i=integer(0),j=integer(0),x=numeric(0),dims=c(n,0))
+  trmsize  <- if (!is.null(trmsize_pre) && prod(dim(trmsize_pre)) > 0) trmsize_pre else matrix(0L, 2, 0)
+  cstruc   <- if (!is.null(cstruc_pre)) cstruc_pre else "diag"
+  csR      <- if (!is.null(csR_pre)) csR_pre else matrix(0L, 0, 2)
+  proptoMats <- if (!is.null(proptoMats_pre)) proptoMats_pre else list(list(matrix(0)))
+  dist     <- if (!is.null(dist_pre)) dist_pre else list(matrix(0))
+
+  ## Sparse dr0 for TMB: ensure it is a sparse Matrix (same as gllvm.TMB.R dr)
+  dr0 <- if (is(dr, "sparseMatrix")) dr else {
+    if (prod(dim(dr)) == 0) Matrix::sparseMatrix(i=integer(0),j=integer(0),x=numeric(0),dims=c(n,0))
+    else Matrix::Matrix(as.matrix(dr), sparse = TRUE)
+  }
+
+  has_random_re <- nrow(dr0) == n && ncol(dr0) > 0
+
+  ## Convert cstruc text to integer codes (same switch as gllvm.TMB.R lines 44-48)
+  cstrucn <- integer(length(cstruc))
+  for (i in seq_along(cstruc)) {
+    cstrucn[i] <- switch(cstruc[i],
+      "ustruc"          = -1L, "diag"            = 0L,
+      "corAR1"          = 1L,  "corExp"          = 2L,
+      "corCS"           = 3L,  "corMatern"       = 4L,
+      "propto"          = 5L,  "proptoustruc"    = 6L,
+      "corAR1ustruc"    = 7L,  "corExpustruc"    = 8L,
+      "corCSustruc"     = 9L,  "corMaternustruc" = 10L,
+      0L)
+  }
+
+  ## Compute log(det) for propto structures (mirrors gllvm.TMB.R lines 50-58)
+  if (any(cstruc %in% c("propto", "proptoustruc"))) {
+    for (i in seq_along(proptoMats)) {
+      if (!is.list(proptoMats[[i]])) proptoMats[[i]] <- list(proptoMats[[i]])
+      if (length(proptoMats[[i]]) < 2)
+        proptoMats[[i]][[2]] <- as.matrix(-determinant(proptoMats[[i]][[1]])$modulus)
     }
   }
 
-  xr          <- matrix(0, 0, 0)   # fixed row-effect design (n x Kr)
-  r0f         <- matrix(0, 0, 1)   # fixed row-effect coefficients (Kr x 1)
-  xrr         <- matrix(0, n, 0)   # random row-effect design (n x G)
-  r0r         <- matrix(0, 0, 1)   # random row-effect VA means (G x 1)
-  lg_Ar       <- numeric(0)        # random row-effect log-Chol diagonals (length G)
-  log_sigma_r <- numeric(0)
-  random_flag <- 0L
+  ## r0r: one VA mean per random-effect unit (length = sum over terms of LHS*groups)
+  if (has_random_re) {
+    re_len <- if (ncol(trmsize) > 0) sum(trmsize[1,] * trmsize[2,]) else 0L
+    r0r <- matrix(0, re_len, 1)
+  } else {
+    r0r <- matrix(0, 0, 1)
+  }
 
-  if (inherits(row.eff, "formula")) {
-    if (is.null(studyDesign))
-      stop("studyDesign must be provided for formula-based row effects.")
-
-    ## --- Fixed part (terms without | bars) ---
-    fixed_form <- nobars1_(row.eff)
-    if (!is.null(fixed_form) && length(all.vars(fixed_form)) > 0) {
-      xr  <- model.matrix(fixed_form, data = studyDesign)
-      r0f <- matrix(0, ncol(xr), 1)
+  ## Initial range for spatial row RE terms (mirrors gllvm.TMB.R scaledc computation)
+  scalmax_re <- 10
+  scaledc_r  <- NULL
+  if (has_random_re) {
+    spatial_cstruc <- c("corExp", "corMatern", "corExpustruc", "corMaternustruc")
+    sp_idx <- which(cstruc %in% spatial_cstruc)
+    for (k in seq_along(sp_idx)) {
+      dm <- if (length(dist) >= k && prod(dim(dist[[k]])) > 1) as.matrix(dist[[k]])
+            else matrix(1, 1, 1)
+      rng <- mean((apply(dm, 2, max) - apply(dm, 2, min)) / scalmax_re)
+      scaledc_r <- c(scaledc_r, log(max(rng, 1e-6)))
     }
+  }
 
-    ## --- Random part (terms with | bars) ---
-    if (anyBars(row.eff)) {
-      bar.f <- findbars1(row.eff)
-      ## Build one indicator matrix per bar term, column-bind them
-      xrr_list <- lapply(bar.f, function(b) {
-        grp_var <- deparse(b[[3]])
-        if (!grp_var %in% colnames(studyDesign))
-          stop("Grouping variable '", grp_var, "' not found in studyDesign.")
-        grp <- factor(studyDesign[[grp_var]])
-        ## Dummy indicator: n x G (drop intercept = TRUE gives G columns)
-        model.matrix(~ grp - 1)
-      })
-      xrr <- do.call(cbind, xrr_list)
-      G   <- ncol(xrr)
-      r0r <- matrix(0, G, 1)
-      lg_Ar       <- rep(log(sqrt(0.1)), G)
-      log_sigma_r <- log(0.3)
-      random_flag <- 1L
+  ## log_sigma: SD (and range/correlation) parameters for each row RE term
+  ## Mirrors gllvm.TMB.R lines 1195-1246 using trmsize[1,] (LHS size per term)
+  log_sigma_r <- if (has_random_re && ncol(trmsize) > 0) {
+    MaternKappa_r <- 1.5
+    sigmanew <- NULL
+    iter_sp  <- 1L
+    for (i in seq_along(cstrucn)) {
+      re    <- cstrucn[i]
+      lhs_i <- trmsize[1, i]
+      if (re %in% c(1L, 3L)) {           # corAR1, corCS: SDs + 1 rho
+        sigmanew <- c(sigmanew, rep(0, lhs_i), 0)
+      } else if (re == 2L) {             # corExp: 1 scale + 1 range
+        sc <- if (length(scaledc_r) >= iter_sp) scaledc_r[iter_sp] else 0
+        sigmanew <- c(sigmanew, 0, sc)
+        iter_sp  <- iter_sp + 1L
+      } else if (re == 4L) {             # corMatern: 1 scale + 1 range + log(kappa)
+        sc <- if (length(scaledc_r) >= iter_sp) scaledc_r[iter_sp] else 0
+        sigmanew <- c(sigmanew, 0, sc, log(MaternKappa_r))
+        iter_sp  <- iter_sp + 1L
+      } else if (re %in% c(0L, 5L, -1L, 6L)) {  # diag, propto, ustruc, proptoustruc
+        sigmanew <- c(sigmanew, rep(0, lhs_i))
+      } else if (re == 7L) {             # corAR1ustruc: SDs + 1 rho
+        sigmanew <- c(sigmanew, rep(0, lhs_i), 0)
+      } else if (re == 9L) {             # corCSustruc: 1 rho + SDs
+        sigmanew <- c(sigmanew, 0, rep(0, lhs_i))
+      } else if (re == 8L) {             # corExpustruc: SDs + 1 range
+        sc <- if (length(scaledc_r) >= iter_sp) scaledc_r[iter_sp] else 0
+        sigmanew <- c(sigmanew, rep(0, lhs_i), sc)
+        iter_sp  <- iter_sp + 1L
+      } else if (re == 10L) {            # corMaternustruc: SDs + 1 range + log(kappa)
+        sc <- if (length(scaledc_r) >= iter_sp) scaledc_r[iter_sp] else 0
+        sigmanew <- c(sigmanew, rep(0, lhs_i), sc, log(MaternKappa_r))
+        iter_sp  <- iter_sp + 1L
+      } else {
+        sigmanew <- c(sigmanew, rep(0, lhs_i))
+      }
     }
+    sigmanew
+  } else {
+    0
+  }
+
+  ## sigmaijr: off-diagonal correlations for unstructured row RE covariance
+  sigmaijr_r <- if (has_random_re && ncol(csR) >= 2 && nrow(csR) > 0)
+    rep(0, nrow(csR)) else 0
+
+  ## lg_Ar: VA scale parameters, mirroring gllvm.TMB.R lines 1098-1102
+  ## Diagonal entries for non-compound-ustruc terms + compound-ustruc terms.
+  ## Off-diagonal VA entries (for ustruc full VA covariance) are only needed when
+  ## diag.iter == 0; since HO defaults to diag.iter = 1 they are skipped here.
+  lg_Ar <- if (has_random_re && ncol(trmsize) > 0) {
+    non_comp <- !grepl("ustruc", cstruc) | cstruc == "ustruc"
+    n_diag   <- sum(trmsize[2, non_comp] * trmsize[1, non_comp])
+    lg <- rep(log(sqrt(0.1)), n_diag)
+    comp_ustruc <- grepl("ustruc", cstruc) & cstruc != "ustruc"
+    if (any(comp_ustruc)) {
+      n_comp <- sum(trmsize[2, comp_ustruc]) + sum(trmsize[1, comp_ustruc]) - sum(comp_ustruc)
+      lg <- c(lg, rep(log(sqrt(0.1)), n_comp))
+    }
+    lg
+  } else {
+    0
   }
 
   ## ---- VA covariance structure --------------------------------------------
@@ -291,12 +376,21 @@ gllvm.HO.TMB <- function(
     Au_sp_init <- rep(au_a_unit, each = p)   # length tri_a*p
   }
 
+  spnr <- if (!is.null(formula.xb)) ncol(as.matrix(formula.xb)) else 0L
+
+  ## csb_z / csb_gamma specify which predictor pairs share a correlated b_z/b_gamma
+  ## posterior — pairs use lower-triangle convention (col1 > col2, 1-indexed).
+  ## By default csb_z is empty so Ab.lv is diagonal (independent across predictors).
+  ## To get full Kz×Kz covariance pass csb_z = .ho_all_pairs(Kz).
+  csb_z     <- matrix(as.integer(csb_z),     ncol = 2L)
+  csb_gamma <- matrix(as.integer(csb_gamma), ncol = 2L)
+
   ## ---- data list ----------------------------------------------------------
   data.list <- list(
     y         = as.matrix(y),
     x         = Xmat,
-    xr        = if (nrow(xr) > 0) xr else matrix(0, 0, 0),
-    xrr       = xrr,
+    xr        = if (nrow(xr) == n) xr else matrix(0, 0, 0),
+    dr0       = dr0,                   # sparse random row-effect design (replaces xrr)
     offset    = offset_mat,
     Ntrials   = Ntrials,
     family    = fam_int,
@@ -304,24 +398,35 @@ gllvm.HO.TMB <- function(
     num_lv    = as.integer(d),
     num_RR    = num.RR,
     num_lvc   = num.lv.c,
-    method    = 0L,              # VA
+    method    = 0L,
     zetastruc = zetastruc_int,
     p_betaH   = 0L,
-    random    = random_flag,
+    random    = c(as.integer(has_random_re), 0L, 0L, as.integer(spnr > 0L)),
     va_struct = va_struct_int,
     ## Canonical covariates and traits
     lv_X_env  = if (!is.null(lv.X)) as.matrix(lv.X) else matrix(0, n, 0),
     TR        = if (!is.null(TR))   as.matrix(TR)    else matrix(0, p, 0),
+    xb        = if (!is.null(formula.xb)) as.matrix(formula.xb) else matrix(0, n, 0),
     ## randomB / randomT and correlation structures
-    randomB   = 1L,                  # "LV" is the only supported option
-    randomT   = 1L,
+    randomB   = as.integer(identical(randomB, "LV")),
+    randomT   = as.integer(identical(randomT, "LV")),
     csb_z     = csb_z,
-    csb_gamma = csb_gamma
+    csb_gamma = csb_gamma,
+    ## Species random effects structure (row_effects.h / species_effects.h)
+    cs             = matrix(0L, max(nrow(csR), 1L), max(ncol(csR), 1L)),  # species RE corr pairs (unused here)
+    colMatBlocksI  = list(matrix(0L)),   # phylogenetic blocks (dclist)
+    nncolMat       = matrix(0L),         # nearest-neighbour (no phylo)
+    Abranks        = 0,                  # ranks (diagonal structure)
+    Abstruc        = 0L,                 # 0 = diagonal/blockdiagonal
+    ## Row random effects (shared header)
+    trmsize        = if (has_random_re && ncol(trmsize) > 0)
+                       matrix(as.integer(trmsize), nrow = 2)
+                     else matrix(0L, 2, 1),
+    csR            = if (nrow(csR) > 0 && ncol(csR) == 2) csR else matrix(0L, 0, 2),
+    cstruc         = if (length(cstrucn) > 0) as.integer(cstrucn) else 0L,
+    proptoMats     = proptoMats,
+    dc             = dist              # site coordinates for corExp/corMatern
   )
-
-  ## Ensure csb matrices are integer
-  csb_z     <- matrix(as.integer(csb_z),     ncol = 2L)
-  csb_gamma <- matrix(as.integer(csb_gamma), ncol = 2L)
 
   ## ---- parameter list -----------------------------------------------------
   param.list <- list(
@@ -339,11 +444,14 @@ gllvm.HO.TMB <- function(
     r0r       = r0r,
     lg_Ar     = lg_Ar,
     log_sigma = log_sigma_r,
+    sigmaijr  = sigmaijr_r,    # row RE off-diagonal correlations
     b_z       = {
       ## When all dims are deterministic (d_va_z==0) and both lv.X and TR are present,
       ## b_z=0 & b_gamma=0 is a saddle point — initialise from SVD of residuals.
       bz0 <- matrix(0, Kz, d)
-      if (Kz > 0L && Kt > 0L && d_va_z == 0L && d_va_a == 0L && d_c > 0L) {
+      if (Kz > 0L && d_c > 0L) {
+        ## Project SVD site scores onto lv.X to get a deterministic b_z start.
+        ## Works regardless of d_va_z / d_va_a (the VA residual u is separate).
         svd_r <- tryCatch(svd(link_y$residuals, nu = d_c, nv = d_c),
                           error = function(e) NULL)
         if (!is.null(svd_r) && length(svd_r$d) >= d_c) {
@@ -354,11 +462,19 @@ gllvm.HO.TMB <- function(
           }
         }
       }
+      ## For randomB=FALSE: QR-orthogonalize the d_c active columns so that
+      ## the starting point satisfies the orthogonality constraints.
+      if (isFALSE(randomB) && d_c > 1L && Kz >= d_c) {
+        bz_act <- bz0[, seq_len(d_c), drop = FALSE]  # Kz × d_c
+        if (all(bz_act == 0)) bz_act <- matrix(rnorm(Kz * d_c, sd = 0.1), Kz, d_c)
+        qr_bz  <- qr(bz_act)
+        bz0[, seq_len(d_c)] <- qr.Q(qr_bz) * norm(bz_act, "F") / sqrt(d_c)
+      }
       bz0
     },
     b_gamma   = {
       bg0 <- matrix(0, Kt, d)
-      if (Kz > 0L && Kt > 0L && d_va_z == 0L && d_va_a == 0L && d_t > 0L) {
+      if (Kt > 0L && d_t > 0L) {
         svd_r <- tryCatch(svd(link_y$residuals, nu = d_t, nv = d_t),
                           error = function(e) NULL)
         if (!is.null(svd_r) && length(svd_r$d) >= d_t) {
@@ -393,6 +509,13 @@ gllvm.HO.TMB <- function(
     }
   )
 
+  ## Formula species effects (xb/Br) — Abstruc=0 diagonal, random(3) path
+  param.list$Br      <- matrix(0, max(spnr, 1L), p)
+  param.list$B       <- matrix(0)           # community-level effects (mapped out, not used here)
+  param.list$sigmaB  <- rep(0, max(spnr, 1L))
+  param.list$sigmaij <- 0                   # off-diagonal species slope covariance (not used)
+  param.list$Abb     <- rep(log(sqrt(0.1)), max(spnr * p, 1L))
+
   ## ---- map: fix params that are unused ------------------------------------
   map.list <- list()
   if (Kz == 0L) {
@@ -410,12 +533,15 @@ gllvm.HO.TMB <- function(
     bg_map[seq(d_t * Kt + 1L, d * Kt)] <- NA_integer_
     map.list$b_gamma <- factor(bg_map)
   }
-  ## Map out random-slope VA params when unused
-  if (Kz == 0L || d_c == 0L) {
+  ## Map out random-slope VA params when unused or when randomB/randomT = FALSE
+  if (Kz == 0L || d_c == 0L || isFALSE(randomB)) {
     map.list$Ab_z         <- factor(rep(NA, length(param.list$Ab_z)))
     map.list$log_sigma_bz <- factor(rep(NA, length(param.list$log_sigma_bz)))
   } else {
-    ## For RR dims, sigma_bz is confounded with Sigma; fix to 1 via map
+    ## For RR dims, z is fully deterministic (no VA residual), so sigma_bz is
+    ## confounded with sigma.lv.  Fix those entries to 1 (log = 0).
+    ## lvc dims have a VA residual — sigma_bz is identified via the cross-covariance
+    ## correction in the z_i KL (see gllvm_HO.cpp), so lvc entries are left free.
     n_rr_bz <- min(num.RR, d_c)
     if (n_rr_bz > 0L) {
       lsigbz_map <- seq_len(length(param.list$log_sigma_bz))
@@ -423,10 +549,11 @@ gllvm.HO.TMB <- function(
       map.list$log_sigma_bz <- factor(lsigbz_map)
     }
   }
-  if (Kt == 0L || d_t == 0L) {
+  if (Kt == 0L || d_t == 0L || isFALSE(randomT)) {
     map.list$Ab_gamma         <- factor(rep(NA, length(param.list$Ab_gamma)))
     map.list$log_sigma_bgamma <- factor(rep(NA, length(param.list$log_sigma_bgamma)))
   } else {
+    ## Same logic for b_gamma / traits: RR dims are deterministic, fix sigma_bgamma there.
     n_rr_bt <- min(num.RR, d_t)
     if (n_rr_bt > 0L) {
       lsigbt_map <- seq_len(length(param.list$log_sigma_bgamma))
@@ -445,14 +572,25 @@ gllvm.HO.TMB <- function(
     phi_map[poisson_cols] <- NA
     map.list$lg_phi <- factor(phi_map)
   }
+  # Map out formula species params when unused
+  if (spnr == 0L) {
+    map.list$Br     <- factor(rep(NA, length(param.list$Br)))
+    map.list$sigmaB <- factor(rep(NA, length(param.list$sigmaB)))
+    map.list$Abb    <- factor(rep(NA, length(param.list$Abb)))
+  }
+  # B and sigmaij: not used in HO (no community-level effects / no correlated species slopes)
+  map.list$B       <- factor(NA)
+  map.list$sigmaij <- factor(NA)
   # Fix row-effect params that are unused
-  has_fixed_re  <- nrow(xr) > 0 && ncol(xr) > 0
-  has_random_re <- random_flag == 1L
+  has_fixed_re <- nrow(xr) == n && ncol(xr) > 0
   if (!has_fixed_re)  map.list$r0f       <- factor(rep(NA, length(r0f)))
   if (!has_random_re) {
     map.list$r0r       <- factor(rep(NA, length(r0r)))
     map.list$lg_Ar     <- factor(rep(NA, length(lg_Ar)))
     map.list$log_sigma <- factor(rep(NA, length(log_sigma_r)))
+    map.list$sigmaijr  <- factor(NA)
+  } else if (length(sigmaijr_r) == 1 && sigmaijr_r == 0 && ncol(csR) < 2) {
+    map.list$sigmaijr <- factor(NA)
   }
 
   ## ---- MakeADFun ----------------------------------------------------------
@@ -515,18 +653,98 @@ gllvm.HO.TMB <- function(
   }
 
   ## ---- Full optimisation --------------------------------------------------
-  opt <- try(
-    nlminb(obj$par, obj$fn, obj$gr,
-           control = list(rel.tol = reltol, iter.max = maxit,
-                          eval.max = maxit * 5, trace = as.integer(trace))),
-    silent = TRUE
-  )
-  if (inherits(opt, "try-error")) {
-    warning("nlminb failed, trying optim BFGS")
-    opt <- optim(obj$par, obj$fn, obj$gr, method = "BFGS",
-                 control = list(reltol = reltol, maxit = maxit, trace = trace))
-    opt$convergence <- opt$convergence == 0
+  if ((d_c <= 1L) || !isFALSE(randomB)) {
+    ## Unconstrained: nlminb (randomB="LV" or only one active dim)
+    opt <- try(
+      nlminb(obj$par, obj$fn, obj$gr,
+             control = list(rel.tol = reltol, iter.max = maxit,
+                            eval.max = maxit * 5, trace = as.integer(trace))),
+      silent = TRUE
+    )
+    if (inherits(opt, "try-error")) {
+      warning("nlminb failed, trying optim BFGS")
+      opt <- optim(obj$par, obj$fn, obj$gr, method = "BFGS",
+                   control = list(reltol = reltol, maxit = maxit, trace = trace))
+      opt$convergence <- opt$convergence == 0
+    }
+  } else {
+    ## randomB=FALSE with d_c > 1: orthogonality constraints on b_z
+    nc_ho <- d_c * (d_c - 1L) / 2L
+    optim.method.eff <- if (is.null(optim.method)) "BFGS" else optim.method
+    if (optimizer == "alabama") {
+      control.optim <- switch(optim.method.eff,
+        "nlminb"  = list(rel.tol = reltol.c, iter.max = maxit, eval.max = maxit),
+        "L-BFGS-B"= list(maxit = maxit, factr = 1 / reltol.c),
+        list(maxit = maxit, reltol = reltol.c)
+      )
+      suppressWarnings(
+        opt <- try(
+          alabama::auglag(obj$par, obj$fn, obj$gr,
+                          heq     = eval_eq_c_ho,
+                          heq.jac = eval_eq_j_ho,
+                          control.optim = control.optim,
+                          control.outer = list(eps = reltol.c, itmax = maxit,
+                                               trace = FALSE, kkt2.check = FALSE,
+                                               method = optim.method.eff),
+                          obj = obj),
+          silent = TRUE
+        )
+      )
+    } else {
+      ## Map gllvm.R shorthand strings (in case called directly, not via gllvm())
+      ## gllvm.R already translates: nloptr(sqp)->NLOPT_LD_SLSQP, nloptr(agl)->NLOPT_LD_AUGLAG_EQ
+      nloptr_alg <- switch(optimizer,
+        "nloptr(sqp)" = "NLOPT_LD_SLSQP",
+        "nloptr(agl)" = "NLOPT_LD_AUGLAG_EQ",
+        optimizer
+      )
+      ## For AUGLAG the inner solver is optim.method; for SLSQP local_opts is unused
+      local_alg <- if (grepl("AUGLAG", nloptr_alg, fixed = TRUE)) optim.method.eff
+                   else "NLOPT_LD_LBFGS"
+      local_opts <- list(algorithm = local_alg,
+                         xtol_rel  = reltol,
+                         maxeval   = maxit,
+                         tol_constraints_eq = rep(reltol.c, nc_ho))
+      opts <- list(algorithm = nloptr_alg,
+                   xtol_rel  = reltol,
+                   maxeval   = maxit,
+                   tol_constraints_eq = rep(reltol.c, nc_ho),
+                   local_opts = local_opts)
+      opt <- try(
+        nloptr::nloptr(x0 = obj$par, eval_f = eval_f, eval_g_eq = eval_g_eq_ho,
+                       opts = opts, obj = obj),
+        silent = TRUE
+      )
+      if (!inherits(opt, "try-error")) {
+        opt$convergence <- as.integer(opt$status < 0 & opt$status != 5)
+        opt$par <- obj$env$last.par.best
+        names(obj$env$last.par.best) <- names(opt$par) <- names(obj$par)
+        if (opt$status < 0) {
+          opt[1] <- opt$message
+          class(opt) <- "try-error"
+        }
+      }
+    }
+    if (inherits(opt, "try-error")) {
+      warning("Constrained optimizer failed, falling back to nlminb (constraints may be violated): ",
+              opt[1])
+      opt <- try(
+        nlminb(obj$par, obj$fn, obj$gr,
+               control = list(rel.tol = reltol, iter.max = maxit,
+                              eval.max = maxit * 5, trace = as.integer(trace))),
+        silent = TRUE
+      )
+      if (inherits(opt, "try-error")) {
+        warning("nlminb also failed, trying optim BFGS")
+        opt <- optim(obj$par, obj$fn, obj$gr, method = "BFGS",
+                     control = list(reltol = reltol, maxit = maxit, trace = trace))
+        opt$convergence <- opt$convergence == 0
+      }
+    }
   }
+  ## auglag returns $value; nlminb returns $objective — normalize for line 943 below
+  if (!inherits(opt, "try-error") && is.null(opt$objective) && !is.null(opt$value))
+    opt$objective <- opt$value
 
   ## ---- Extract parameters -------------------------------------------------
   par_hat <- obj$env$last.par.best
@@ -542,11 +760,10 @@ gllvm.HO.TMB <- function(
   zeta_hat   <- par_hat[names(par_hat) == "zeta"]
   lgphi_hat  <- par_hat[names(par_hat) == "lg_phi"]
 
-  ## Recover ordered sigma from cumulative-sum parameterisation
-  ## sigma(k) = sum_{l=k}^{d-1} exp(sigmaLV(l))
-  sigma_hat       <- numeric(d)
-  sigma_hat[d]    <- exp(sigLV_hat[d])
-  if (d > 1) for (k in (d-1):1) sigma_hat[k] <- sigma_hat[k+1] + exp(sigLV_hat[k])
+  ## sigma(0) = exp(sigmaLV(0)); sigma(k) = sigma(k-1)*exp(-exp(sigmaLV(k))), k>=1
+  sigma_hat    <- numeric(d)
+  sigma_hat[1] <- exp(sigLV_hat[1])
+  if (d > 1) for (k in 2:d) sigma_hat[k] <- sigma_hat[k-1] * exp(-exp(sigLV_hat[k]))
 
   ## Site VA covariances (d_va_z dimensions)
   if (va_struct_int == 0L) {
@@ -578,29 +795,38 @@ gllvm.HO.TMB <- function(
     for (k in seq_len(d_va_a)) Aj_diag[,k] <- A_lv_out[,k,k]
   }
 
+  ## ---- Ab.lv / Ab.load: VA covariance arrays for b_z and b_gamma ------------
+  ## Ab.lv  has dim c(d_c, Kz, Kz): Ab.lv[l,,]  = Kz×Kz VA covariance of b_z[:,l]
+  ## Ab.load has dim c(d_t, Kt, Kt): Ab.load[l,,] = Kt×Kt VA covariance of b_gamma[:,l]
+  ## Diagonal entries from exp(Ab_z[q*d_c + l]); lower-triangle off-diag stored raw.
+  .build_bz_cov <- function(Ab_raw, K, dc) {
+    arr <- array(0.0, dim = c(dc, K, K))
+    for (l in seq_len(dc)) {
+      L <- matrix(0.0, K, K)
+      for (q in seq_len(K))
+        L[q, q] <- exp(Ab_raw[(q - 1L) * dc + l])
+      if (length(Ab_raw) > K * dc) {
+        k <- 0L
+        for (cc in seq_len(K - 1L)) {
+          for (r in seq(cc + 1L, K)) {
+            k <- k + 1L
+            L[r, cc] <- Ab_raw[K * dc + (k - 1L) * dc + l]
+          }
+        }
+      }
+      arr[l, , ] <- L %*% t(L)
+    }
+    arr
+  }
+  Ab.lv   <- if (Kz > 0L && d_c > 0L) .build_bz_cov(par_lst$Ab_z,    Kz, d_c) else NULL
+  Ab.load <- if (Kt > 0L && d_t > 0L) .build_bz_cov(par_lst$Ab_gamma, Kt, d_t) else NULL
+
   ## ---- Parameter extraction helpers -----------------------------------------
   b_z_hat     <- if (Kz > 0L) matrix(par_lst$b_z,     Kz, d) else NULL
   b_gamma_hat <- if (Kt > 0L) matrix(par_lst$b_gamma,  Kt, d) else NULL
   lv_X_mat    <- if (!is.null(lv.X)) as.matrix(lv.X) else NULL
   TR_mat      <- if (!is.null(TR))   as.matrix(TR)   else NULL
   num.lv_unc  <- d - num.RR - num.lv.c
-
-  ## ---- lvs.full: n × d full padded z, HO [RR|lvc|lv] order -----------------
-  ## RR dims: deterministic z = lv_X * b_z if Kz>0, else VA u_hat
-  ## lvc/lv:  z = u_hat[:, rr_va_z + (k - num.RR)]
-  lvs_full <- matrix(0, n, d)
-  for (k in seq_len(d)) {
-    if (k <= num.RR) {
-      if (Kz > 0L && !is.null(b_z_hat) && !is.null(lv_X_mat)) {
-        lvs_full[, k] <- lv_X_mat %*% b_z_hat[, k]
-      } else {
-        lvs_full[, k] <- u_hat[, k]
-      }
-    } else {
-      iz <- rr_va_z + (k - num.RR)
-      lvs_full[, k] <- u_hat[, iz]
-    }
-  }
 
   ## ---- loadings (p × d unscaled gamma, HO [RR|lvc|lv] order) ---------------
   loadings_full <- matrix(0, p, d)
@@ -617,26 +843,9 @@ gllvm.HO.TMB <- function(
     }
   }
 
-  ## ---- lvs: residual VA scores, n × (num.lv.c + num.lv_unc) -----------------
-  ## Matches standard gllvm convention: lvc cols store (u_hat - lv_X * b_z),
-  ## lv cols store raw u_hat.  predict.gllvm then adds back lv_X * LvXcoef.
-  d_va_lvc_lv <- num.lv.c + num.lv_unc
-  if (d_va_lvc_lv == 0L || d_va_z == 0L) {
-    lvs_std <- matrix(0, n, 0)
-  } else {
-    lvs_raw <- if (rr_va_z == 0L) {
-      u_hat[, seq_len(d_va_z), drop = FALSE]
-    } else {
-      u_hat[, seq(rr_va_z + 1L, d_va_z), drop = FALSE]
-    }
-    if (num.lv.c > 0L && Kz > 0L && !is.null(b_z_hat) && !is.null(lv_X_mat)) {
-      for (k in seq_len(num.lv.c)) {
-        k_ho <- num.RR + k
-        lvs_raw[, k] <- lvs_raw[, k] - lv_X_mat %*% b_z_hat[, k_ho, drop = FALSE]
-      }
-    }
-    lvs_std <- lvs_raw
-  }
+  ## ---- lvs: raw VA posterior means u_hat, n × d_va_z -------------------------
+  ## getLV reconstructs full/residual site scores on the fly.
+  lvs_std <- if (d_va_z == 0L) matrix(0, n, 0L) else u_hat
 
   ## ---- params$theta: unscaled gamma, standard [lvc|RR|lv] order -------------
   if (num.RR > 0L && num.lv.c > 0L) {
@@ -673,12 +882,8 @@ gllvm.HO.TMB <- function(
     method       = "VA",
     TMB          = TRUE,
     random.loadings = TRUE,
-    ## lvs: residual VA scores n × (num.lv.c + num.lv_unc), standard gllvm format
+    ## lvs: raw VA posterior means u_hat, n × d_va_z
     lvs          = lvs_std,
-    ## lvs.full: full n × d unscaled z, HO [RR|lvc|lv] order (for ordiplot)
-    lvs.full     = lvs_full,
-    ## loadings: full p × d unscaled gamma, HO [RR|lvc|lv] order (for ordiplot)
-    loadings     = loadings_full,
     params       = list(
       beta0    = b_hat[1, ],
       Xcoef    = if (Kx > 1) t(b_hat[-1, , drop = FALSE]) else NULL,
@@ -690,8 +895,7 @@ gllvm.HO.TMB <- function(
       zeta     = if (has_ordinal && length(zeta_hat) > 0L) zeta_hat else NULL,
       phi      = if (length(lgphi_hat) > 0L) exp(lgphi_hat) else NULL,
       inv.phi  = if (length(lgphi_hat) > 0L) 1 / exp(lgphi_hat) else NULL,
-      b_z      = if (Kz > 0L) matrix(par_lst$b_z, Kz, d) else NULL,
-      b_gamma  = if (Kt > 0L) matrix(par_lst$b_gamma, Kt, d) else NULL,
+      LoadTRcoef = if (Kt > 0L) matrix(par_lst$b_gamma, Kt, d) else NULL,
       ## sigma.bz / sigma.bgamma: only the lvc entries (RR entries are fixed to 1)
       sigma.bz = {
         n_rr_bz  <- min(num.RR, d_c)
@@ -706,14 +910,28 @@ gllvm.HO.TMB <- function(
         if (Kt > 0L && n_lvc_bt > 0L)
           exp(par_hat[names(par_hat) == "log_sigma_bgamma"][seq(n_rr_bt + 1L, d_t)])
         else NULL
-      }
+      },
+      row.params.fixed  = if (has_fixed_re) {
+        r0f_v <- as.vector(par_hat[names(par_hat) == "r0f"])
+        names(r0f_v) <- colnames(obj$env$data$xr)
+        r0f_v
+      } else NULL,
+      row.params.random = if (has_random_re) {
+        as.vector(par_hat[names(par_hat) == "r0r"])
+      } else NULL,
+      sigma = if (has_random_re) {
+        exp(par_hat[names(par_hat) == "log_sigma"])
+      } else NULL
     ),
     ## Variational covariances (VA dims only: d_va_z / d_va_a)
     Lambda.struc = Lambda.struc,
     A            = A_out,
-    A_lv         = A_lv_out,
-    A_diag       = Ai_diag,
-    A_lv_diag    = Aj_diag,
+    B            = A_lv_out,
+    ## VA covariance arrays for canonical coefficients b_z / b_gamma
+    ## Ab.lv[l,,]   = Kz×Kz covariance of b_z[:,l]   (dim c(d_c, Kz, Kz))
+    ## Ab.load[l,,] = Kt×Kt covariance of b_gamma[:,l] (dim c(d_t, Kt, Kt))
+    Ab.lv        = Ab.lv,
+    Ab.load      = Ab.load,
     ## Hessian / SE info — computed by gllvm() post-fitting
     Hess         = NULL,
     sd           = FALSE,
@@ -742,6 +960,27 @@ gllvm.HO.TMB <- function(
   if (!is.null(opt$par)) out$TMBfn$par <- opt$par
 
   class(out) <- c("gllvmHO", "gllvm")
+  out
+}
+
+## Helper: extract diagonal of VA covariance — A is either n×d (diagonal case)
+## or n×d×d (unstructured); returns n×d matrix of diagonal variances.
+#' @keywords internal
+## Build lower-triangle pair matrix for csb_z / csb_gamma.
+## Usage: gllvm(..., csb_z = .ho_all_pairs(ncol(lv.X)))
+## Each row is (i, j) with i > j (1-indexed), matching the C++ index convention.
+#' @keywords internal
+.ho_all_pairs <- function(K) {
+  if (K < 2L) return(matrix(0L, 0L, 2L))
+  pairs <- t(combn(seq_len(K), 2L))[, c(2L, 1L), drop = FALSE]
+  matrix(as.integer(pairs), ncol = 2L)
+}
+
+.ho_diag <- function(A) {
+  if (is.matrix(A)) return(A)
+  nr <- dim(A)[1L]; d <- dim(A)[2L]
+  out <- matrix(0, nr, d)
+  for (k in seq_len(d)) out[, k] <- A[, k, k]
   out
 }
 
@@ -822,13 +1061,193 @@ gllvm.HO.TMB <- function(
   # Pad to d_total if d_svd > d_total (shouldn't happen) or truncate
   svals_d <- svals_scaled[seq_len(d_total)]
 
-  sigmaLV <- numeric(d_total)
-  sigmaLV[d_total] <- log(svals_d[d_total])
-  if (d_total > 1)
-    for (k in (d_total - 1):1)
-      sigmaLV[k] <- log(max(svals_d[k] - svals_d[k + 1], 1e-6))
+  sigmaLV    <- numeric(d_total)
+  sigmaLV[1] <- log(svals_d[1])
+  if (d_total > 1) {
+    ratio       <- svals_d[-1] / svals_d[-d_total]
+    ratio       <- pmax(pmin(ratio, 1 - 1e-4), 1e-4)
+    sigmaLV[-1] <- log(-log(ratio))
+  }
 
   list(u = U, a_sp = V, sigmaLV = sigmaLV, beta0 = beta0)
+}
+
+##############################################################################
+## .ho_sigma_normalized: per-dim sigma rescaled for display in summary.
+##
+## Two standardisation regimes (ms.Rmd §"Post-hoc standardisation"):
+##
+## randomB = "LV"  (B_z random): s_k = sqrt(n^{-1} sum_i Var_q(z_{ik}))
+##   Var_q(z_{ik}) = Ai_diag + x_i^T Ab_lv x_i  (from ms.Rmd eq lvcvar)
+##   The random B_z inflates the marginal posterior variance above 1, so sigma
+##   is deflated by s_k to restore unit-scale interpretation.
+##
+## randomB = FALSE (B_z fixed): s_k = sqrt(n^{-1} sum_i E_q[z_{ik}^2])
+##   E_q[z_{ik}^2] = (mu_{ik})^2 + Ai_diag  where mu_{ik} = (lv_X b_z)[i,k] + u_hat[i]
+##   B_z is deterministic; the rescaling puts sigma on the scale of the RMS
+##   of the fitted site scores (the natural "effective variance" when B_z ≠ 0).
+##
+## r_k analogously for gamma_{jk} with randomT.
+## When Kz = 0 (no covariates) or Kt = 0 (no traits): s_k = r_k = 1.
+#' @keywords internal
+.ho_sigma_normalized <- function(object) {
+  d    <- object$num.RR + object$num.lv.c + object$num.lv
+  nRR  <- object$num.RR
+  nlvc <- object$num.lv.c
+  Kz   <- if (!is.null(object$lv.X)) ncol(as.matrix(object$lv.X)) else 0L
+  Kt   <- if (!is.null(object$TR))   ncol(as.matrix(object$TR))   else 0L
+  n    <- nrow(object$y)
+  p    <- ncol(object$y)
+  sigma_raw <- object$params$sigma.lv
+
+  sk <- rep(1, d)
+  rk <- rep(1, d)
+
+  ## ---- determine which formula applies for each side ----------------------
+  ## "var":    randomB/T = "LV"  → posterior variance formula
+  ## "moment": randomB/T = FALSE → second-moment formula with fixed B_z/B_gamma
+  ## "none":   no covariates/traits → keep sk/rk = 1
+  sk_mode <- if (Kz > 0L && identical(object$randomB, "LV"))   "var"
+             else if (Kz > 0L && isFALSE(object$randomB))      "moment"
+             else                                               "none"
+  rk_mode <- if (Kt > 0L && identical(object$randomT, "LV"))   "var"
+             else if (Kt > 0L && isFALSE(object$randomT))      "moment"
+             else                                               "none"
+
+  if (sk_mode == "none" && rk_mode == "none")
+    return(data.frame(sigma = sigma_raw, s_k = sk, r_k = rk,
+                      sigma_eff = sigma_raw,
+                      row.names = paste0("dim", seq_len(d))))
+
+  ## ---- shared data --------------------------------------------------------
+  Ai_diag <- if (!is.null(object$A)) .ho_diag(object$A) else matrix(0, n, 0L)
+  Aj_diag <- if (!is.null(object$B)) .ho_diag(object$B) else matrix(0, p, 0L)
+  Ab_lv   <- object$Ab.lv    # d_c × Kz × Kz array or NULL
+  Ab_load <- object$Ab.load  # d_t × Kt × Kt array or NULL
+
+  lv_X_mat <- if (Kz > 0L && !is.null(object$lv.X)) as.matrix(object$lv.X) else NULL
+  TR_mat   <- if (Kt > 0L && !is.null(object$TR))   as.matrix(object$TR)   else NULL
+
+  ## VA index offset: when lv.X is present, RR dims have no VA residual
+  rr_va_z <- if (Kz > 0L) 0L else nRR
+  rr_va_a <- if (Kt > 0L) 0L else nRR
+
+  ## LvXcoef (Kz × d_c) in std [lvc|RR] order; unscale by sigma for b_z
+  LvXcoef <- object$params$LvXcoef   # Kz × (nlvc+nRR) or NULL
+  ## LoadTRcoef (Kt × d) in HO [RR|lvc|lv] order (first d_t cols active)
+  LoadTRcoef <- object$params$LoadTRcoef  # Kt × d or NULL
+  ## VA means for gamma_j: theta (p × d) in std [lvc|RR|lv] order
+  theta_std  <- object$params$theta       # p × d or NULL
+  ## VA means for z: lvs = u_hat (n × d_va_z) — residual part only
+  lvs <- object$lvs   # n × d_va_z
+
+  for (k in seq_len(d)) {
+    ## Map HO dim k to standard theta/LvXcoef column:
+    ##   k ≤ nRR   → std col = nlvc + k
+    ##   nRR < k ≤ nRR+nlvc → std col = k - nRR
+    ##   k > nRR+nlvc → std col = k  (lv dims share same offset in std order)
+    k_std <- if (k <= nRR) nlvc + k else if (k <= nRR + nlvc) k - nRR else k
+
+    ## z-side VA column index (offset already encodes whether RR has VA residual)
+    iz <- if (k <= nRR) rr_va_z + k else rr_va_z + (k - nRR)
+
+    ## LvXcoef column index for z (only for lvc/RR dims with lv.X):
+    ##   lvc dim k_std = k - nRR → col = k - nRR;  RR dim → col = nlvc + k
+    ##   (== k_std by construction above)
+    lvc_col <- k_std   # works for both lvc and RR ranges
+
+    ## gamma-side VA column index
+    ia <- if (k <= nRR) rr_va_a + k else rr_va_a + (k - nRR)
+
+    ## ---- s_k ----------------------------------------------------------------
+    if (sk_mode == "var") {
+      ## Posterior variance: Var_q(z_{ik}) = Ai_diag + x_i^T Ab_lv x_i
+      if (k <= nRR) {
+        if (!is.null(Ab_lv) && k <= dim(Ab_lv)[1L])
+          sk[k] <- sqrt(sum(Ab_lv[k, , ] * crossprod(lv_X_mat)) / n)
+        else if (iz >= 1L && iz <= ncol(Ai_diag))
+          sk[k] <- sqrt(mean(Ai_diag[, iz]))
+      } else if (k <= nRR + nlvc) {
+        sk[k] <- sqrt(
+          (if (iz >= 1L && iz <= ncol(Ai_diag)) mean(Ai_diag[, iz]) else 0) +
+          (if (!is.null(Ab_lv) && k <= dim(Ab_lv)[1L])
+             sum(Ab_lv[k, , ] * crossprod(lv_X_mat)) / n else 0)
+        )
+      } else {
+        if (iz >= 1L && iz <= ncol(Ai_diag)) sk[k] <- sqrt(mean(Ai_diag[, iz]))
+      }
+
+    } else if (sk_mode == "moment") {
+      ## Second moment: E_q[z_{ik}^2] = mu_{ik}^2 + Ai_diag[i,iz]
+      if (k <= nRR) {
+        ## RR dim: z_ik = lv_X %*% b_z[,lvc_col] (no VA residual)
+        if (!is.null(LvXcoef) && lvc_col <= ncol(LvXcoef))
+          sk[k] <- sqrt(mean((lv_X_mat %*% (LvXcoef[, lvc_col] / sigma_raw[k]))^2))
+      } else if (k <= nRR + nlvc) {
+        ## lvc dim: z_ik = lv_X %*% b_z[,lvc_col] + u_hat[i,iz]
+        det <- if (!is.null(LvXcoef) && lvc_col <= ncol(LvXcoef))
+                 drop(lv_X_mat %*% (LvXcoef[, lvc_col] / sigma_raw[k])) else 0
+        va  <- if (!is.null(lvs) && iz <= ncol(lvs)) lvs[, iz] else 0
+        Av  <- if (iz <= ncol(Ai_diag)) Ai_diag[, iz] else 0
+        sk[k] <- sqrt(mean((det + va)^2 + Av))
+      } else {
+        ## lv dim: no b_z; second moment of VA posterior
+        va  <- if (!is.null(lvs) && iz <= ncol(lvs)) lvs[, iz] else 0
+        Av  <- if (iz <= ncol(Ai_diag)) Ai_diag[, iz] else 0
+        sk[k] <- sqrt(mean(va^2 + Av))
+      }
+    }
+
+    ## ---- r_k ----------------------------------------------------------------
+    if (rk_mode == "var") {
+      if (k <= nRR) {
+        if (!is.null(Ab_load) && k <= dim(Ab_load)[1L])
+          rk[k] <- sqrt(sum(Ab_load[k, , ] * crossprod(TR_mat)) / p)
+        else if (ia >= 1L && ia <= ncol(Aj_diag))
+          rk[k] <- sqrt(mean(Aj_diag[, ia]))
+      } else if (k <= nRR + nlvc) {
+        rk[k] <- sqrt(
+          (if (ia >= 1L && ia <= ncol(Aj_diag)) mean(Aj_diag[, ia]) else 0) +
+          (if (!is.null(Ab_load) && k <= dim(Ab_load)[1L])
+             sum(Ab_load[k, , ] * crossprod(TR_mat)) / p else 0)
+        )
+      } else {
+        if (ia >= 1L && ia <= ncol(Aj_diag)) rk[k] <- sqrt(mean(Aj_diag[, ia]))
+      }
+
+    } else if (rk_mode == "moment") {
+      ## LoadTRcoef is Kt × d in HO order; b_gamma col = k (for k ≤ d_t active)
+      ## theta_std is p × d in std order; gamma VA mean at std col k_std
+
+      if (k <= nRR) {
+        ## RR dim: gamma_jk = TR %*% b_gamma[,k] (no VA residual)
+        if (!is.null(LoadTRcoef) && k <= ncol(LoadTRcoef))
+          rk[k] <- sqrt(mean((TR_mat %*% LoadTRcoef[, k])^2))
+      } else if (k <= nRR + nlvc) {
+        ## lvc dim: gamma_jk = TR %*% b_gamma[,k] + a_jk
+        det <- if (!is.null(LoadTRcoef) && k <= ncol(LoadTRcoef))
+                 drop(TR_mat %*% LoadTRcoef[, k]) else 0
+        th  <- if (!is.null(theta_std) && k_std <= ncol(theta_std))
+                 theta_std[, k_std] else 0
+        Av  <- if (ia <= ncol(Aj_diag)) Aj_diag[, ia] else 0
+        rk[k] <- sqrt(mean((det + th)^2 + Av))
+      } else {
+        ## lv dim: gamma_jk = a_jk (theta_std holds alv_hat in std order)
+        th  <- if (!is.null(theta_std) && k_std <= ncol(theta_std))
+                 theta_std[, k_std] else 0
+        Av  <- if (ia <= ncol(Aj_diag)) Aj_diag[, ia] else 0
+        rk[k] <- sqrt(mean(th^2 + Av))
+      }
+    }
+  }
+
+  data.frame(
+    sigma     = sigma_raw,
+    s_k       = sk,
+    r_k       = rk,
+    sigma_eff = sigma_raw * sk * rk,
+    row.names = paste0("dim", seq_len(d))
+  )
 }
 
 ##############################################################################
@@ -836,66 +1255,216 @@ gllvm.HO.TMB <- function(
 ##############################################################################
 
 #' Summary method for Hierarchical Ordination models
+#' @param object a fitted \code{gllvmHO} object
+#' @param digits number of significant digits
+#' @param signif.stars logical; whether to print significance stars
+#' @param spp.intercepts logical; whether to include species intercepts
+#' @param ... not used
 #' @export
-#' @keywords internal
-summary.gllvmHO <- function(object, ...) {
-  cat("Hierarchical Ordination model (VA)\n")
-  cat("Call:", deparse(object$call), "\n\n")
-  cat("Family:", paste(unique(object$family), collapse = ", "), "\n")
-  n <- nrow(object$lvs)
-  p <- nrow(object$loadings)
-  d <- object$num.lv
-  cat("n =", n, "  p =", p, "  d =", d, "\n\n")
+summary.gllvmHO <- function(object,
+                             digits       = max(3L, getOption("digits") - 3L),
+                             signif.stars = getOption("show.signif.stars"),
+                             dispersion   = FALSE,
+                             row.intercepts = FALSE, ...) {
+  n    <- nrow(object$y)
+  p    <- ncol(object$y)
+  nRR  <- object$num.RR
+  nlvc <- object$num.lv.c
+  nlv  <- object$num.lv
 
-  ## Ordination scale
-  sig <- object$params$sigma.lv
-  cat("Ordination scale (sigma_1 >= ... >= sigma_d):\n")
-  names(sig) <- paste0("dim", seq_along(sig))
-  print(round(sig, 4))
-  cat("\n")
+  ## Information criteria
+  k_df <- tryCatch(length(object$TMBfn$par), error = function(e) NA_integer_)
+  logL <- object$logL
+  aic  <- if (is.finite(logL) && !is.na(k_df)) -2 * logL + 2 * k_df          else NA_real_
+  aicc <- if (is.finite(logL) && !is.na(k_df))
+            aic + (2 * k_df * (k_df + 1)) / max(n * p - k_df - 1, 1)          else NA_real_
+  bic  <- if (is.finite(logL) && !is.na(k_df)) -2 * logL + k_df * log(n * p) else NA_real_
 
+  ## Post-processed sigma_eff (sigma * s_k * r_k) — one value per dim
+  sigma_tbl  <- .ho_sigma_normalized(object)
+  sigma_eff  <- sigma_tbl$sigma_eff          # named vector, length d
 
-  ## Fixed-effect intercepts
-  cat("Species intercepts (beta0):\n")
-  b0 <- object$params$beta0
-  if (!is.null(object$sd) && !isFALSE(object$sd) && !is.null(object$sd$beta0)) {
-    df_b0 <- data.frame(
-      Estimate = round(b0, 4),
-      Std.Err  = round(object$sd$beta0, 4)
+  ## Fixed-effects coefficient table (Xcoef with SEs when sd.errors = TRUE)
+  Coef.tableX <- NULL
+  if (!is.logical(object$sd) && !is.null(object$sd$Xcoef) &&
+      !is.null(object$params$Xcoef)) {
+    pars <- c(object$params$Xcoef)
+    se   <- c(object$sd$Xcoef)
+    zval <- pars / se
+    pval <- 2 * pnorm(-abs(zval))
+    Coef.tableX <- cbind(Estimate = pars, `Std. Error` = se,
+                         `z value` = zval, `Pr(>|z|)` = pval)
+    xnames  <- if (!is.null(colnames(object$X.design)[-1L])) colnames(object$X.design)[-1L] else
+                 paste0("X", seq_len(ncol(object$X.design) - 1L))
+    spnames <- if (!is.null(colnames(object$y))) colnames(object$y) else paste0("sp", seq_len(p))
+    rownames(Coef.tableX) <- paste(
+      rep(xnames, each = p),
+      rep(spnames, length(xnames)),
+      sep = ":"
     )
-    rownames(df_b0) <- if (!is.null(colnames(object$y))) colnames(object$y) else
-      paste0("sp", seq_len(p))
-    print(df_b0)
-  } else {
-    print(round(b0, 4))
-  }
-  cat("\n")
-
-  ## b_z
-  if (!is.null(object$params$b_z)) {
-    cat("Canonical covariate coefficients (b_z):\n")
-    bz <- object$params$b_z
-    rownames(bz) <- if (!is.null(colnames(object$lv.X))) colnames(object$lv.X) else
-      paste0("cov", seq_len(nrow(bz)))
-    colnames(bz) <- paste0("dim", seq_len(ncol(bz)))
-    print(round(bz, 4))
-    cat("\n")
   }
 
-  ## b_gamma
-  if (!is.null(object$params$b_gamma)) {
-    cat("Trait coefficients (b_gamma):\n")
-    bg <- object$params$b_gamma
-    rownames(bg) <- if (!is.null(colnames(object$TR))) colnames(object$TR) else
-      paste0("trait", seq_len(nrow(bg)))
-    colnames(bg) <- paste0("dim", seq_len(ncol(bg)))
-    print(round(bg, 4))
-    cat("\n")
+  ## Random LV predictor effects (sigma.bz / sigma.bgamma — prior scales for b_z, b_gamma)
+  REbcovs <- NULL
+  if (identical(object$randomB, "LV") && !is.null(object$params$sigma.bz)) {
+    sbz <- object$params$sigma.bz
+    REbcovs <- data.frame(
+      Name     = if (!is.null(names(sbz))) names(sbz) else paste0("dim", seq_along(sbz)),
+      Variance = format(round(sbz^2, digits), nsmall = digits),
+      Std.Dev  = format(round(sbz,   digits), nsmall = digits)
+    )
   }
 
-  cat("Log-likelihood:", round(object$logL, 4), "\n")
-  cat("Converged:", isTRUE(object$convergence), "\n")
-  invisible(object)
+  ## LV predictor coefficient table (LvXcoef — canonical covariate effects)
+  Coef.tableLV <- NULL
+  if (!is.null(object$params$LvXcoef)) {
+    L      <- object$params$LvXcoef   # Kz × d_act
+    d_act  <- nRR + nlvc
+    lvxn   <- if (!is.null(object$lv.X)) colnames(object$lv.X) else
+                paste0("cov", seq_len(nrow(L)))
+    dimnm  <- paste0("dim", seq_len(ncol(L)))
+    if (!is.null(rownames(L)) && !all(rownames(L) == "")) lvxn <- rownames(L)
+    rownames(L) <- lvxn; colnames(L) <- dimnm
+    Coef.tableLV <- L
+  }
+
+  ## Trait coefficient table (LoadTRcoef — trait effects on species loadings)
+  Coef.tableTR <- NULL
+  if (!is.null(object$params$LoadTRcoef)) {
+    G     <- object$params$LoadTRcoef   # Kt × d
+    trn   <- if (!is.null(object$TR)) colnames(object$TR) else
+               paste0("trait", seq_len(nrow(G)))
+    dimnm <- paste0("dim", seq_len(ncol(G)))
+    if (!is.null(rownames(G)) && !all(rownames(G) == "")) trn <- rownames(G)
+    rownames(G) <- trn; colnames(G) <- dimnm
+    Coef.tableTR <- G
+  }
+
+  ## Random row effects
+  Rowcovs <- NULL
+  if (!isFALSE(object$row.eff) && !is.null(object$params$sigma)) {
+    sig_re  <- object$params$sigma
+    sig_re  <- sig_re[!grepl(".rho|.Scale", names(sig_re))]
+    Rowcovs <- data.frame(
+      Name     = if (!is.null(names(sig_re))) names(sig_re) else paste0("re", seq_along(sig_re)),
+      Variance = format(round(sig_re^2, digits), nsmall = digits),
+      Std.Dev  = format(round(sig_re,   digits), nsmall = digits)
+    )
+  }
+
+  sumry <- list(
+    Call            = object$call,
+    family          = unique(object$family),
+    `log-likelihood`= logL,
+    df              = k_df,
+    AIC             = aic,
+    AICc            = aicc,
+    BIC             = bic,
+    num.lv.c        = nlvc,
+    num.RR          = nRR,
+    num.lv          = nlv,
+    sigma.lv        = sigma_eff,
+    formula         = object$formula,
+    lv.formula      = object$lv.formula,
+    load.formula    = object$load.formula,
+    row.eff         = object$row.eff,
+    Rowcovs         = Rowcovs,
+    Coef.tableX     = Coef.tableX,
+    REbcovs         = REbcovs,
+    Coef.tableLV    = Coef.tableLV,
+    Coef.tableTR    = Coef.tableTR,
+    dispersion      = dispersion,
+    row.intercepts  = row.intercepts,
+    family_full     = object$family,
+    phi             = object$params$phi,
+    digits          = digits,
+    signif.stars    = signif.stars
+  )
+  class(sumry) <- "summary.gllvmHO"
+  sumry
+}
+
+##############################################################################
+## print.summary.gllvmHO  — mirrors print.summary.gllvm
+##############################################################################
+
+#' @export
+print.summary.gllvmHO <- function(x, ...) {
+  digits <- x$digits
+
+  cat("\nCall:\n", paste(deparse(x$Call), sep = "\n", collapse = "\n"), "\n\n", sep = "")
+  cat("Family: ", paste(unique(x$family), collapse = ", "), "\n\n")
+
+  AIC  <- round(x$AIC,  digits)
+  BIC  <- round(x$BIC,  digits)
+  AICc <- round(x$AICc, digits)
+  cat("AIC: ", AIC, "AICc: ", AICc, "BIC: ", BIC,
+      "LL: ", zapsmall(x$`log-likelihood`, digits), "df: ", x$df, "\n\n")
+
+  cat("Informed LVs: ",    x$num.lv.c, "\n")
+  cat("Constrained LVs: ", x$num.RR,   "\n")
+  cat("Unconstrained LVs: ", x$num.lv, "\n")
+
+  ## Effective sigma (sigma_eff = sigma * s_k * r_k), always shown for HO
+  cat("Effective standard deviation of LVs: ",
+      zapsmall(x$sigma.lv, digits), "\n\n")
+
+  cat("Formula: ",      paste(x$formula,     collapse = ""), "\n")
+  cat("LV formula: ",   ifelse(is.null(x$lv.formula),   "~ 0", paste(x$lv.formula,   collapse = "")), "\n")
+  cat("Load formula: ", ifelse(is.null(x$load.formula),  "~ 0", paste(x$load.formula, collapse = "")), "\n")
+  cat("Row effect: ",   ifelse(isFALSE(x$row.eff), "~ 1", paste(x$row.eff, collapse = "")), "\n")
+
+  if (!is.null(x$Rowcovs)) {
+    cat("\n Random effects:\n")
+    print(x$Rowcovs, row.names = FALSE, right = FALSE)
+  }
+
+  if (!is.null(x$Coef.tableX)) {
+    cat("\nCoefficients predictors:\n")
+    printCoefmat(x$Coef.tableX, digits = digits, signif.stars = x$signif.stars,
+                 na.print = "NA", ...)
+  }
+
+  if (!is.null(x$REbcovs)) {
+    cat("\nRandom effects LV predictors:\n")
+    print(x$REbcovs, row.names = FALSE, right = FALSE)
+  }
+
+  if (!is.null(x$Coef.tableLV)) {
+    cat("\nCoefficients LV predictors:\n")
+    print(round(x$Coef.tableLV, digits))
+  }
+
+  if (!is.null(x$Coef.tableTR)) {
+    cat("\nCoefficients trait predictors:\n")
+    print(round(x$Coef.tableTR, digits))
+  }
+
+  if (x$row.intercepts && !is.null(x$`Row intercepts`)) {
+    cat("\n Row intercepts with variance",
+        zapsmall(x$`Variance of random row intercepts`, digits), ":\n")
+    print(zapsmall(x$`Row intercepts`, digits))
+  }
+
+  if (x$dispersion) {
+    fam <- x$family_full
+    if (any(fam %in% c("negative.binomial", "negative.binomial1", "tweedie"))) {
+      cat("\n(Dispersion estimates for ",
+          paste(unique(fam[fam %in% c("negative.binomial", "negative.binomial1", "tweedie")]),
+                collapse = ", "), ":\n")
+      print(x$phi[fam %in% c("negative.binomial", "negative.binomial1", "tweedie")])
+    }
+    if (any(fam %in% c("gamma", "beta"))) {
+      cat("\n(Shape estimates for ", paste(unique(fam[fam %in% c("gamma", "beta")]), collapse = ", "), ":\n")
+      print(x$phi[fam %in% c("gamma", "beta")])
+    }
+    if (any(fam == "gaussian")) {
+      cat("\n(Standard deviations for gaussian:\n")
+      print(x$phi[fam == "gaussian"])
+    }
+  }
+
+  invisible(x)
 }
 
 ## Helper: rebuild named parameter list from a flat vector + template list

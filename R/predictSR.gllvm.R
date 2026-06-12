@@ -54,7 +54,7 @@
 
 predictSR.gllvm <- function(object, spp = NULL, expected = "mean", se.fit = 1000, level = 1, ci = "expected", alpha = 0.95, seed = 42, return.pred = FALSE, batch = NULL, ...){
 
-  if(isFALSE(object$sd)) se.fit = FALSE
+  if(isFALSE(object$sd) || is.null(object$sd)) se.fit = FALSE
   fit <- predict(object, type = "response", se.fit = FALSE, ordinal.cat = 1L, spp = spp, level = level, ...)
 
   probs <- gllvm.presence.prob(fit, object, spp = spp)
@@ -152,6 +152,107 @@ predictSR.gllvm <- function(object, spp = NULL, expected = "mean", se.fit = 1000
   class(out) <- "predictSR.gllvm"
   return(out)
   
+}
+
+#'@export predictSR.gllvmHO
+#'@method predictSR gllvmHO
+predictSR.gllvmHO <- function(object, spp = NULL, expected = "mean",
+                               se.fit = FALSE, level = 1,
+                               ci = "expected", alpha = 0.95, seed = 42,
+                               return.pred = FALSE, batch = NULL, ...) {
+  if (isFALSE(object$sd) || is.null(object$sd)) se.fit <- FALSE
+
+  fit   <- predict(object, type = "response", level = level, ...)
+  probs <- gllvm.presence.prob(fit, object, spp = spp)
+
+  if (is.null(spp)) spp <- seq_len(ncol(probs))
+  SR <- 0:ncol(probs)
+  n  <- nrow(probs)
+
+  eSR <- rowSums(probs)
+  if (expected == "mode") eSR <- sapply(eSR, pbMode, n = length(spp))
+
+  TMBcores    <- TMB::openmp(DLL = "gllvm")[1]
+  PoisBinCores <- get_omp_threads()
+  if (PoisBinCores == 1 && TMBcores > 1) set_omp_threads(TMBcores)
+
+  predSR <- poisbinom(probs)
+  colnames(predSR) <- paste0("SR_", SR)
+
+  out <- list(predicted = list(fit = predSR), expected = list(fit = eSR))
+
+  if (is.numeric(se.fit) || isTRUE(se.fit)) {
+    R <- if (is.numeric(se.fit)) se.fit else 1000L
+
+    params <- simulate_params_gllvmHO(object, R, seed, level = level, n = n)
+
+    type <- if (expected == "mode") 1L else 7L
+
+    do_expected <- "expected" %in% ci
+    do_pmf      <- "pmf" %in% ci
+
+    if (do_expected) eSRmat     <- matrix(0.0, nrow = R, ncol = n)
+    if (do_pmf)      predSR.sim <- array(0, dim = c(R, n, length(SR)))
+
+    batches <- if (do_pmf || is.null(batch)) list(spp) else
+                 split(spp, ceiling(seq_along(spp) / batch))
+
+    skeleton     <- object$TMBfn$env$parList()
+    obj_template <- object
+    obj_template$params <- lapply(object$params,
+                                   function(x) { if (is.numeric(x)) x[] <- NA; x })
+    if (!is.null(obj_template$lvs)) obj_template$lvs[] <- NA
+
+    for (r in seq_len(R)) {
+      newobj <- perturb_gllvmHO(object, params, r,
+                                 skeleton = skeleton, template = obj_template)
+
+      if (do_pmf) {
+        pred_r  <- predict(newobj, type = "response", level = level, ...)
+        probs_r <- gllvm.presence.prob(pred_r, object, spp = spp)
+        predSR.sim[r, , ] <- poisbinom(probs_r)
+        if (do_expected) {
+          eSRmat[r, ] <- rowSums(probs_r)
+          if (expected == "mode")
+            eSRmat[r, ] <- sapply(eSRmat[r, ], pbMode, n = length(spp))
+        }
+      } else if (do_expected) {
+        for (b in batches) {
+          pred_r <- predict(newobj, type = "response", level = level, ...)
+          eSRmat[r, ] <- eSRmat[r, ] +
+            rowSums(gllvm.presence.prob(pred_r, object, spp = b))
+        }
+        if (expected == "mode")
+          eSRmat[r, ] <- sapply(eSRmat[r, ], pbMode, n = length(spp))
+      }
+    }
+
+    if (do_expected) {
+      eSR.CI <- apply(eSRmat, 2L, quantile,
+                      prob = c((1 - alpha) / 2, 1 - (1 - alpha) / 2),
+                      type = type)
+      out$expected$lower <- eSR.CI[1L, ]
+      out$expected$upper <- eSR.CI[2L, ]
+    }
+
+    if (do_pmf) {
+      SR.ci <- array(dim = c(2, n, length(SR)))
+      for (i in seq_len(n)) {
+        center    <- pmin(pmax(predSR[i, ], .Machine$double.eps), 1 - .Machine$double.eps)
+        sim_i     <- pmin(pmax(predSR.sim[, i, ], .Machine$double.eps), 1 - .Machine$double.eps)
+        dists     <- hilbert_to_provided_center(sim_i, center)
+        threshold <- quantile(dists, alpha)
+        SR.ci[, i, ] <- apply(predSR.sim[dists <= threshold, i, , drop = FALSE], 3, range)
+      }
+      out$predicted$lower <- SR.ci[1, , ]
+      out$predicted$upper <- SR.ci[2, , ]
+    }
+  }
+
+  out$spp <- spp
+  if (return.pred) out$predict.gllvm <- list(fit = fit)
+  class(out) <- "predictSR.gllvm"
+  out
 }
 
 #'@export
@@ -311,21 +412,18 @@ gllvm.presence.prob <- function(fit, object, spp = NULL) {
     mu    <- fit[, fcols, drop = FALSE]
 
     if(fam == "binomial"){
-      Ntrials_mat <- matrix(object$Ntrials[, j, drop = FALSE], nrow = n, ncol = length(pos))
-      probs[, pos] <- 1 - pbinom(0, size = Ntrials_mat, prob = mu)
+      probs[, pos] <- mu
     } else if(fam == "ZIB"){
       # params$phi for ZIB stores the zero-inflation probability directly (see gllvm.TMB.R line ~1669)
       sigma_vec <- rep(object$params$phi[j], each = n)
-      Ntrials_vec <- c(object$Ntrials[, j, drop = FALSE])
-      probs[, pos] <- matrix(1 - pzib(0, mu = as.vector(mu), sigma = sigma_vec, Ntrials = Ntrials_vec), nrow = n)
+      probs[, pos] <- matrix(1 - pzib(0, mu = as.vector(mu), sigma = sigma_vec, Ntrials = 1L), nrow = n)
     } else if(fam == "ZNIB"){
       # params$phi stores p0 and ZINB.phi stores pN (already on probability scale, see residuals.gllvm)
       phis0 <- (object$params$phi[j]      / (1 + object$params$phi[j] + object$params$ZINB.phi[j]))
       phisN <- (object$params$ZINB.phi[j] / (1 + object$params$phi[j] + object$params$ZINB.phi[j]))
       p0_vec  <- rep(phis0, each = n)
       pN_vec  <- rep(phisN, each = n)
-      Ntrials_vec <- c(object$Ntrials[, j, drop = FALSE])
-      probs[, pos] <- matrix(1 - pznib(0, mu = as.vector(mu), p0 = p0_vec, pN = pN_vec, Ntrials = Ntrials_vec), nrow = n)
+      probs[, pos] <- matrix(1 - pznib(0, mu = as.vector(mu), p0 = p0_vec, pN = pN_vec, Ntrials = 1L), nrow = n)
     } else if(fam == "poisson"){
       probs[, pos] <- ppois(0, lambda = mu, lower.tail = FALSE)
     } else if(fam == "negative.binomial"){
@@ -359,8 +457,7 @@ gllvm.presence.prob <- function(fit, object, spp = NULL) {
       probs[, pos] <- 1 - mu # mu = p(y;k=1), i.e., 1- probability of absence
     } else if(fam == "beta.binomial"){
       phi_vec <- rep(object$params$phi[j], each = n)
-      Ntrials_vec <- c(object$Ntrials[, j, drop = FALSE])
-      probs[, pos] <- matrix(1 - pbetabinom(0, mu = as.vector(mu), phi = phi_vec, Ntrials = Ntrials_vec), nrow = n)
+      probs[, pos] <- matrix(1 - pbetabinom(0, mu = as.vector(mu), phi = phi_vec, Ntrials = 1L), nrow = n)
     }
   }
 
@@ -438,18 +535,69 @@ residuals.predictSR.gllvm <- function(object, model, ...){
 #' @param x object of class predictSR
 #' @param object object of class gllvm
 #' @param which which plot to create, 1 is Dunn-Smyth residuals vs Expected species richness, 2 is QQ-plot
+#' @param covariate \code{NULL} (default), \code{TRUE}, or a character vector of covariate names. If \code{TRUE}, residuals are plotted against all available covariates found in \code{object$X}, \code{object$lv.X}, and variables referenced in the \code{row.eff} formula (when it is a formula and the variables are present in \code{object$X} or \code{object$lv.X}). If a character vector, residuals are plotted against the named variables, searched across the same sources. One panel is added per covariate, placed after the panels selected by \code{which}.
 #' @param ... not used for plot.predictSR.gllvm
 #'
-#' @method plot predictSR.gllvm 
+#' @method plot predictSR.gllvm
 #' @export
-#' @rdname predictSR.gllvm 
-plot.predictSR.gllvm <- function(x, object, which = c(1,2), ...){
+#' @rdname predictSR.gllvm
+plot.predictSR.gllvm <- function(x, object, which = c(1, 2), covariate = NULL, ...) {
   res <- residuals.predictSR.gllvm(object = x, model = object)
-  
-  par(mfrow=c(1,length(which)))
-  
-  if(1%in%which)plot(xlab = "Expected species richness", ylab = "Dunn-Smyth residuals", x = res$fitted, y = res$residuals)
-  if(2%in%which)qqnorm(res$residuals);qqline(res$residuals)
+
+  # Build a combined pool of all available covariate columns, deduplicated
+  pool_list <- list()
+  if (!is.null(object$X))    pool_list$X    <- as.data.frame(object$X)
+  if (!is.null(object$lv.X)) pool_list$lv.X <- as.data.frame(object$lv.X)
+  if (inherits(object$row.eff, "formula")) {
+    re_vars <- all.vars(object$row.eff)
+    all_pool <- do.call(cbind, pool_list)
+    re_found <- intersect(re_vars, colnames(all_pool))
+    if (length(re_found)) pool_list$row.eff <- all_pool[, re_found, drop = FALSE]
+  }
+  if (length(pool_list) == 0L) {
+    all_cov <- NULL
+  } else {
+    all_cov <- do.call(cbind, pool_list)
+    all_cov <- all_cov[, !duplicated(colnames(all_cov)), drop = FALSE]
+  }
+
+  if (isTRUE(covariate)) {
+    if (is.null(all_cov) || ncol(all_cov) == 0L)
+      stop("'covariate = TRUE' found no covariates in the model.")
+    cov_mat <- all_cov
+  } else if (is.character(covariate)) {
+    if (is.null(all_cov) || ncol(all_cov) == 0L)
+      stop("'covariate' requires covariates in the model.")
+    miss <- setdiff(covariate, colnames(all_cov))
+    if (length(miss))
+      stop("Covariate(s) not found in model: ", paste(miss, collapse = ", "))
+    cov_mat <- all_cov[, covariate, drop = FALSE]
+  } else {
+    cov_mat <- NULL
+  }
+
+  ncov <- if (!is.null(cov_mat)) ncol(cov_mat) else 0L
+  par(mfrow = c(1L, length(which) + ncov))
+
+  if (1 %in% which) {
+    plot(x = res$fitted, y = res$residuals,
+         xlab = "Expected species richness", ylab = "Dunn-Smyth residuals")
+    abline(h = 0, lty = 2)
+  }
+  if (2 %in% which) {
+    qqnorm(res$residuals)
+    qqline(res$residuals)
+  }
+  if (!is.null(cov_mat)) {
+    cn <- colnames(cov_mat)
+    for (k in seq_len(ncov)) {
+      plot(x = cov_mat[, k], y = res$residuals,
+           xlab = cn[k], ylab = "Dunn-Smyth residuals")
+      abline(h = 0, lty = 2)
+    }
+  }
+
+  invisible(res)
 }
 
 pbMode <- function(mu, n) {

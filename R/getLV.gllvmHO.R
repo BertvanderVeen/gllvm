@@ -29,15 +29,19 @@
 #' @export getLV.gllvmHO
 getLV.gllvmHO <- function(object, type = NULL, ...) {
   n      <- nrow(object$y)
-  d      <- ncol(object$lvs.full)   # total dims
   num.RR  <- as.integer(object$num.RR  %||% 0L)
   num.lvc <- as.integer(object$num.lv.c %||% 0L)
   num.lv  <- as.integer(object$num.lv  %||% 0L)  # unconstrained
+  d       <- num.RR + num.lvc + num.lv
   sigma   <- object$params$sigma.lv
-  Kz <- if (!is.null(object$lv.X.design)) ncol(as.matrix(object$lv.X.design)) else 0L
+  lv_X    <- if (!is.null(object$lv.X.design)) as.matrix(object$lv.X.design) else NULL
+  Kz      <- if (!is.null(lv_X)) ncol(lv_X) else 0L
+  ## VA-index offset: when Kz==0, RR dims are also in VA space
+  rr_va_z <- if (Kz > 0L) 0L else num.RR
+  ## LvXcoef: sigma-scaled b_z, std [lvc|RR] order
+  lvxc <- object$params$LvXcoef  # Kz × (num.lvc + num.RR)
 
-  if ((num.RR + num.lvc + num.lv) == 0L)
-    stop("No latent variables in model.")
+  if (d == 0L) stop("No latent variables in model.")
   if (!is.null(type) && !type %in% c("residual", "conditional", "marginal"))
     stop("type must be one of: residual, conditional, marginal.")
 
@@ -53,8 +57,8 @@ getLV.gllvmHO <- function(object, type = NULL, ...) {
   }
 
   ## --- Validate -------------------------------------------------------------
-  if (type == "conditional" && num.lvc == 0L)
-    stop("'conditional' scores require num.lv.c > 0.")
+  if (type == "conditional" && num.lvc == 0L && num.RR == 0L && num.lv == 0L)
+    stop("'conditional' scores require at least one latent variable.")
   if (type == "residual" && num.lvc == 0L && num.lv == 0L)
     stop("'residual' scores require num.lv.c > 0 or num.lv > 0.")
   if (type == "marginal" && num.lvc == 0L && num.RR == 0L)
@@ -64,15 +68,43 @@ getLV.gllvmHO <- function(object, type = NULL, ...) {
 
   ## --- Compute scores -------------------------------------------------------
   if (type == "conditional") {
-    ## Full sigma-scaled z (posterior means), all d dims, HO [RR|lvc|lv] order
-    lvs <- t(t(object$lvs.full) * sigma)
-    ## Reorder to standard [lvc | RR | lv]
+    ## Full unscaled z in HO [RR|lvc|lv] order, then scale and reorder to std
+    z_full <- matrix(0.0, n, d)
+
+    if (num.RR > 0L) {
+      if (Kz > 0L && !is.null(lvxc) && !is.null(lv_X)) {
+        ## deterministic: z = lv_X * b_z  (unscale LvXcoef by sigma)
+        rr_cols_std <- num.lvc + seq_len(num.RR)
+        b_z_rr <- sweep(lvxc[, rr_cols_std, drop = FALSE],
+                        2L, sigma[seq_len(num.RR)], `/`)
+        z_full[, seq_len(num.RR)] <- lv_X %*% b_z_rr
+      } else {
+        ## VA: stored as first rr_va_z cols of object$lvs
+        z_full[, seq_len(num.RR)] <- object$lvs[, seq_len(num.RR), drop = FALSE]
+      }
+    }
+
+    if (num.lvc > 0L) {
+      iz <- rr_va_z + seq_len(num.lvc)
+      z_full[, num.RR + seq_len(num.lvc)] <- object$lvs[, iz, drop = FALSE]
+    }
+
+    if (num.lv > 0L) {
+      iz <- rr_va_z + num.lvc + seq_len(num.lv)
+      z_full[, num.RR + num.lvc + seq_len(num.lv)] <- object$lvs[, iz, drop = FALSE]
+    }
+
+    ## Scale by sigma (HO order), then reorder to standard [lvc|RR|lv]
+    lvs_ho <- t(t(z_full) * sigma)
     if (num.RR > 0L && num.lvc > 0L) {
       idx <- c(seq(num.RR + 1L, num.RR + num.lvc),
                seq_len(num.RR),
                if (num.lv > 0L) seq(num.RR + num.lvc + 1L, d) else integer(0))
-      lvs <- lvs[, idx, drop = FALSE]
+      lvs <- lvs_ho[, idx, drop = FALSE]
+    } else {
+      lvs <- lvs_ho
     }
+
     n_clv <- num.lvc + num.RR
     if (n_clv > 0L && num.lv > 0L)
       colnames(lvs) <- c(paste0("CLV", seq_len(n_clv)), paste0("LV", seq_len(num.lv)))
@@ -82,29 +114,32 @@ getLV.gllvmHO <- function(object, type = NULL, ...) {
       colnames(lvs) <- paste0("LV", seq_len(num.lv))
 
   } else if (type == "marginal") {
-    ## Sigma-scaled covariate prior mean: sigma_k * lv_X * b_z[:,k]
-    lv_X <- as.matrix(object$lv.X.design)
-    b_z  <- object$params$b_z   # Kz x d, HO [RR|lvc|lv] order
-    d_active <- num.RR + num.lvc
-    lvs_det <- lv_X %*% b_z[, seq_len(d_active), drop = FALSE]  # n x d_active
-    lvs_det <- t(t(lvs_det) * sigma[seq_len(d_active)])
-    ## Reorder from HO [RR|lvc] to standard [lvc|RR]
-    if (num.RR > 0L && num.lvc > 0L) {
-      lvs <- lvs_det[, c(seq(num.RR + 1L, d_active), seq_len(num.RR)), drop = FALSE]
-    } else {
-      lvs <- lvs_det
-    }
+    ## LvXcoef = sigma * b_z, standard [lvc|RR] order — use directly
+    lvs  <- lv_X %*% lvxc   # n x (num.lvc + num.RR), already sigma-scaled
     colnames(lvs) <- paste0("CLV", seq_len(ncol(lvs)))
 
   } else {  ## "residual"
-    ## Sigma-scaled VA residuals (posterior mean minus prior mean for lvc)
-    ## object$lvs stores these in [lvc | lv] order, NOT sigma-scaled
-    lvs_va <- object$lvs   # n x (num.lvc + num.lv)
-    ## sigma for lvc and lv dims (in [lvc|lv] standard order)
-    sigma_lvc <- if (num.lvc > 0L) sigma[seq(num.RR + 1L, num.RR + num.lvc)] else numeric(0)
-    sigma_lv  <- if (num.lv  > 0L) sigma[seq(num.RR + num.lvc + 1L, d)]      else numeric(0)
-    sigma_va  <- c(sigma_lvc, sigma_lv)
-    lvs <- t(t(lvs_va) * sigma_va)
+    ## Sigma-scaled residual: u_hat - lv.X * b_z for lvc; raw u_hat for lv
+
+    lvc_part <- if (num.lvc > 0L) {
+      iz <- rr_va_z + seq_len(num.lvc)
+      raw <- object$lvs[, iz, drop = FALSE]
+      if (Kz > 0L && !is.null(lvxc) && !is.null(lv_X)) {
+        b_z_lvc <- sweep(lvxc[, seq_len(num.lvc), drop = FALSE],
+                         2L, sigma[num.RR + seq_len(num.lvc)], `/`)
+        raw <- raw - lv_X %*% b_z_lvc
+      }
+      sweep(raw, 2L, sigma[num.RR + seq_len(num.lvc)], `*`)
+    } else matrix(0.0, n, 0L)
+
+    lv_part <- if (num.lv > 0L) {
+      iz <- rr_va_z + num.lvc + seq_len(num.lv)
+      sweep(object$lvs[, iz, drop = FALSE],
+            2L, sigma[num.RR + num.lvc + seq_len(num.lv)], `*`)
+    } else matrix(0.0, n, 0L)
+
+    lvs <- cbind(lvc_part, lv_part)
+
     n_clv <- num.lvc
     if (n_clv > 0L && num.lv > 0L)
       colnames(lvs) <- c(paste0("CLV", seq_len(n_clv)), paste0("LV", seq_len(num.lv)))

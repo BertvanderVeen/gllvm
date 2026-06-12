@@ -3017,6 +3017,61 @@ eval_g_eq <- function(x, obj = NULL){
   return(res)
 }
 
+eval_g_eq_ho <- function(x, obj = NULL) {
+  ## HO data.list uses "num_lvc"; standard gllvm uses "num_lv_c"
+  nlvc   <- if (!is.null(obj$env$data$num_lvc)) obj$env$data$num_lvc else obj$env$data$num_lv_c
+  d_c    <- nlvc + obj$env$data$num_RR
+  bz_idx <- which(names(obj$par) == "b_z")
+  Kz     <- length(bz_idx) / d_c
+  B      <- matrix(x[bz_idx], Kz, d_c)
+  nc     <- d_c * (d_c - 1L) / 2L
+  combs  <- combn(seq_len(d_c), 2L)
+  con    <- colSums(B[, combs[1L,], drop = FALSE] * B[, combs[2L,], drop = FALSE])
+  jacob.B <- matrix(0, nc, length(bz_idx))
+  idx.i  <- rep(seq_len(nc), each = Kz)
+  idx.j  <- Kz * (rep(combs[1L,], each = Kz) - 1L) + rep(seq_len(Kz), nc)
+  jacob.B[cbind(idx.i, idx.j)] <- c(B[, combs[2L,]])
+  idx.j  <- Kz * (rep(combs[2L,], each = Kz) - 1L) + rep(seq_len(Kz), nc)
+  jacob.B[cbind(idx.i, idx.j)] <- c(B[, combs[1L,]])
+  jacob  <- cbind(
+    matrix(0, nc, bz_idx[1L] - 1L),
+    jacob.B,
+    matrix(0, nc, length(x) - tail(bz_idx, 1L))
+  )
+  list(constraints = con, jacobian = jacob)
+}
+
+eval_eq_c_ho <- function(x, obj, ...) {
+  nlvc  <- if (!is.null(obj$env$data$num_lvc)) obj$env$data$num_lvc else obj$env$data$num_lv_c
+  d_c   <- nlvc + obj$env$data$num_RR
+  bz_idx <- which(names(obj$par) == "b_z")
+  Kz    <- length(bz_idx) / d_c
+  B     <- matrix(x[bz_idx], Kz, d_c)
+  combs <- combn(seq_len(d_c), 2L)
+  colSums(B[, combs[1L,], drop = FALSE] * B[, combs[2L,], drop = FALSE])
+}
+
+eval_eq_j_ho <- function(x, obj, ...) {
+  nlvc   <- if (!is.null(obj$env$data$num_lvc)) obj$env$data$num_lvc else obj$env$data$num_lv_c
+  d_c    <- nlvc + obj$env$data$num_RR
+  bz_idx <- which(names(obj$par) == "b_z")
+  Kz     <- length(bz_idx) / d_c
+  B      <- matrix(x[bz_idx], Kz, d_c)
+  nc     <- d_c * (d_c - 1L) / 2L
+  combs  <- combn(seq_len(d_c), 2L)
+  jacob.B <- matrix(0, nc, length(bz_idx))
+  idx.i  <- rep(seq_len(nc), each = Kz)
+  idx.j  <- Kz * (rep(combs[1L,], each = Kz) - 1L) + rep(seq_len(Kz), nc)
+  jacob.B[cbind(idx.i, idx.j)] <- c(B[, combs[2L,]])
+  idx.j  <- Kz * (rep(combs[2L,], each = Kz) - 1L) + rep(seq_len(Kz), nc)
+  jacob.B[cbind(idx.i, idx.j)] <- c(B[, combs[1L,]])
+  cbind(
+    matrix(0, nc, bz_idx[1L] - 1L),
+    jacob.B,
+    matrix(0, nc, length(x) - tail(bz_idx, 1L))
+  )
+}
+
 # function to post-hoc estimate lagranian multipliers
 # see https://discourse.julialang.org/t/lagrangian-function/38287/18?u=stevengj
 lambda<-function(x,obj)c(-obj$gr()%*%MASS::ginv(eval_eq_j(x,obj = obj)))
