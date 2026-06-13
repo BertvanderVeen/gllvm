@@ -335,6 +335,123 @@ CMSEPf_HO <- function(fit) {
   list(A = A_sites, A_lv = A_species, d_va_z = d_va_z, d_va_a = d_va_a)
 }
 
+#' CMSEP-corrected covariance for b_z (canonical covariate coefficients) in gllvmHO
+#'
+#' Uses the block-matrix inversion formula
+#'   cov(b_z) = D^{-1} + D^{-1} C A_fixed B D^{-1}
+#' where D = H_{bz,bz}, B = H_{fixed,bz}, C = H_{bz,fixed} and
+#' A_fixed = cov.mat.mod (Schur-complement covariance of fixed effects).
+#' D^{-1} is approximated by the block-diagonal Ab.lv matrix
+#' (the VA posterior covariance, which is the optimum of the ELBO w.r.t. b_z).
+#'
+#' @param fit gllvmHO object with $Hess and $Ab.lv populated.
+#' @return Full (Kz*d_c) x (Kz*d_c) CMSEP covariance matrix, or NULL if unavailable.
+#' @keywords internal
+CMSEPf_HO_bz <- function(fit) {
+  if (is.null(fit$Hess) || is.null(fit$Ab.lv)) return(NULL)
+  H    <- fit$Hess$Hess.full
+  pnms <- rownames(H)
+  incl <- fit$Hess$incl
+
+  bz_mask <- pnms == "b_z"
+  if (!any(bz_mask)) return(NULL)
+
+  d_c <- dim(fit$Ab.lv)[1L]
+  Kz  <- dim(fit$Ab.lv)[2L]
+
+  ## VA posterior covariance for b_z as block-diagonal: bdiag(Ab.lv[1,,], ..., Ab.lv[d_c,,])
+  ## TMB stores b_z column-major: [b_z[:,1], ..., b_z[:,d_c]], each column has Kz entries.
+  ## matrix() wraps the slice to avoid R's drop=TRUE collapsing Kz=1 to a scalar.
+  Ab_block <- as.matrix(Matrix::bdiag(lapply(seq_len(d_c), function(l) matrix(fit$Ab.lv[l, , ], Kz, Kz))))
+
+  ## Cross-Hessian blocks between b_z and fixed-effect parameters
+  C <- H[bz_mask, incl, drop = FALSE]   # (Kz*d_c) × n_fixed
+  B <- H[incl, bz_mask, drop = FALSE]   # n_fixed  × (Kz*d_c)
+  A <- fit$Hess$cov.mat.mod             # n_fixed  × n_fixed (cov of fixed effects)
+
+  ## CMSEP correction: D^{-1} C A B D^{-1}  with D^{-1} ≈ Ab_block
+  correction <- Ab_block %*% C %*% A %*% B %*% Ab_block
+  Ab_block + correction
+}
+
+#' CMSEP-corrected covariance for b_gamma (trait coefficients) in gllvmHO
+#'
+#' Analogous to \code{CMSEPf_HO_bz} but for the b_gamma parameters.
+#' @keywords internal
+CMSEPf_HO_bgamma <- function(fit) {
+  if (is.null(fit$Hess) || is.null(fit$Ab.load)) return(NULL)
+  H    <- fit$Hess$Hess.full
+  pnms <- rownames(H)
+  incl <- fit$Hess$incl
+
+  bg_mask <- pnms == "b_gamma"
+  if (!any(bg_mask)) return(NULL)
+
+  d_t <- dim(fit$Ab.load)[1L]
+  Kt  <- dim(fit$Ab.load)[2L]
+
+  Ab_block <- as.matrix(Matrix::bdiag(lapply(seq_len(d_t), function(l) matrix(fit$Ab.load[l, , ], Kt, Kt))))
+
+  C <- H[bg_mask, incl, drop = FALSE]
+  B <- H[incl, bg_mask, drop = FALSE]
+  A <- fit$Hess$cov.mat.mod
+
+  correction <- Ab_block %*% C %*% A %*% B %*% Ab_block
+  Ab_block + correction
+}
+
+#' Joint CMSEP for (b_z, a_lv_sp) in gllvmHO
+#'
+#' Returns the Schur-complement CMSEP for the stacked VA parameter vector
+#' (b_z; a_lv_sp), including the off-diagonal cross-covariance block
+#' Cov_CMSEP(b_z, a_lv_sp).  This is needed for the full bilinear variance
+#' formula in randomCoefplot.gllvmHO; the two parameters cannot be corrected
+#' separately because the cross-block only appears when both are included
+#' jointly in C_va = H[{b_z,a_lv_sp}, fixed].
+#'
+#' Ordering: b_z rows first (Kz*d_c), then a_lv_sp rows (p*d_va_a).
+#' b_z column-major: position of b_z[k,l] = (l-1)*Kz + k.
+#' a_lv_sp column-major: position of a_lv_sp[j,ia] = n_bz + (ia-1)*p + j.
+#'
+#' @return list: $joint (full matrix), $n_bz, $n_asp, $Kz, $d_c, $d_va_a
+#' @keywords internal
+CMSEPf_HO_bilinear <- function(fit) {
+  if (is.null(fit$Hess) || is.null(fit$Ab.lv)) return(NULL)
+
+  n <- nrow(fit$y); p <- ncol(fit$y)
+  H    <- fit$Hess$Hess.full
+  pnms <- rownames(H)
+  incl <- fit$Hess$incl
+
+  bz_mask  <- pnms == "b_z"
+  asp_mask <- pnms == "a_lv_sp"
+  if (!any(bz_mask)) return(NULL)
+
+  d_c    <- dim(fit$Ab.lv)[1L]
+  Kz     <- dim(fit$Ab.lv)[2L]
+  d_va_a <- if (any(asp_mask)) sum(asp_mask) %/% p else 0L
+  n_bz   <- Kz * d_c
+  n_asp  <- p * d_va_a
+
+  ## Block-diagonal VA posterior covariance: b_z first, then a_lv_sp
+  Ab_bz <- as.matrix(Matrix::bdiag(lapply(seq_len(d_c), function(l)
+    matrix(fit$Ab.lv[l, , ], Kz, Kz))))
+  B_asp <- if (d_va_a > 0L && any(asp_mask))
+    diag(as.vector(.ho_diag(fit$B)), n_asp)
+  else
+    matrix(numeric(0), 0L, 0L)
+  D_va <- as.matrix(Matrix::bdiag(list(Ab_bz, B_asp)))
+
+  ## Select VA rows from H in the same order as D_va (b_z then a_lv_sp)
+  va_rows <- c(which(bz_mask), if (any(asp_mask)) which(asp_mask) else integer(0))
+  C_va <- H[va_rows, incl, drop = FALSE]
+  A    <- fit$Hess$cov.mat.mod
+
+  joint <- D_va + D_va %*% C_va %*% A %*% t(C_va) %*% D_va
+  list(joint = joint, n_bz = n_bz, n_asp = n_asp,
+       Kz = Kz, d_c = d_c, d_va_a = d_va_a)
+}
+
 #'@export getPredictErr.gllvmHO
 #'@method getPredictErr gllvmHO
 getPredictErr.gllvmHO <- function(object, CMSEP = TRUE, cov = FALSE, ...) {

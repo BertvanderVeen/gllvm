@@ -106,13 +106,19 @@ randomCoefplot.gllvmHO <- function(object,
   invisible(list(coef = coef_mat, se = se_mat))
 }
 
-## Full variance for beta_jk = sum_l f_{kl} * g_l, f = sigma*b_z (random), g = theta_j (random),
-## independent under factored q (van der Veen et al. 2022 Appendix S1 eq 4):
+## Full variance for beta_jk = sum_l f_l * g_l, f_l = sigma_l*b_z[k,l] (random),
+## g_l = gamma_j[l] (random), independent under factored q.
+## Var(f_l * g_l) = E[f_l]^2 Var(g_l) + E[g_l]^2 Var(f_l) + Var(f_l)Var(g_l).
+## Since f and g dims are VA-independent, summing gives:
 ##
-##   Var(beta_jk)
-##     = sum_{l,l'} L[k,l]*L[k,l'] * B_out[j,ia(l),ia(l')]   [theta uncertainty]
-##     + sum_l sig_l^2 * Ab.lv[ablv(l),k,k] * B_diag[j,ia(l)] [var_f × var_g]
-##     + sum_l sig_l^2 * Ab.lv[ablv(l),k,k] * theta[j,l]^2    [var_f × E[g]^2]
+##   Var(beta_jk) = L_k^T Cov(gamma_j) L_k          [Term 1: full quadratic in species covariance]
+##                + theta_j^T C_k theta_j            [Term 3: full quadratic in b_z covariance]
+##                + sum_l C_k[l,l] * Var(gamma_j[l]) [Term 2: diagonal because g dims independent]
+##
+## The full Isserlis formula requires the joint CMSEP of (b_z, a_lv_sp) from
+## CMSEPf_HO_bilinear() — the cross-covariance Cov(b_z[k,l], a_lv_sp[j,l'])
+## cannot be recovered from separate marginal CMSEPs.  Falls back to
+## VA-only independence formula (no CMSEP correction) when Hessian is absent.
 ##
 ## Indices:
 ##   ia(l)    — B_out column for standard dim l (0 = deterministic theta, skip var_g term)
@@ -151,55 +157,115 @@ randomCoefplot.gllvmHO <- function(object,
   Ab.lv   <- object$Ab.lv   # (d_c, Kz, Kz) where d_c = nRR + nlvc
   B_out   <- object$B
   is_full <- length(dim(B_out)) == 3L
-  B_diag  <- .ho_diag(B_out)          # p × d_va_a
 
-  ## Precompute Ab.lv diagonal per (l, k): var_f_kl = sig_l^2 * Ab.lv[ablv(l), k, k]
-  ## Shape: d_act × Kz — row l, col k
-  var_f <- matrix(0, d_act, Kz)
-  for (l in seq_len(d_act)) {
-    al <- ablv_for_std[l]
-    if (al >= 1L && al <= dim(Ab.lv)[1L])
-      var_f[l, ] <- sig2[l] * Ab.lv[al, , ][ cbind(seq_len(Kz), seq_len(Kz)) ]
+  ## CMSEP-corrected gamma (species loading) variances: p × d_total (HO order SDs)
+  ## getPredictErr adds the Hessian Schur-complement correction to B_out when a
+  ## Hessian is available.  Fall back to raw B_out diagonal if Hessian absent.
+  d_total <- nRR + nlvc + (object$num.lv %||% 0L)
+  d_va_a  <- ncol(.ho_diag(B_out))
+  if (!is.null(object$Hess)) {
+    pe     <- getPredictErr(object, CMSEP = TRUE, cov = FALSE)
+    ## pe$loadings is p × d_total SDs in HO order; we need the d_va_a VA-active columns.
+    ## VA-active species columns sit at the END of the d_total HO-order block.
+    ho_idx_a <- seq(d_total - d_va_a + 1L, d_total)
+    B_diag   <- pe$loadings[, ho_idx_a, drop = FALSE]^2   # p × d_va_a variances
+  } else {
+    B_diag  <- .ho_diag(B_out)   # p × d_va_a (raw VA variances)
   }
-  # var_f[l,k] = Var_q(sigma_l * b_z[k,l])
+
+  ## Joint CMSEP for (b_z, a_lv_sp): cannot be computed separately because the
+  ## cross-covariance Cov_CMSEP(b_z[k,l], a_lv_sp[j,l']) only appears when both
+  ## are included jointly in C_va = H[{b_z,a_lv_sp}, fixed].
+  jcmsep <- if (!is.null(object$Hess))
+    tryCatch(CMSEPf_HO_bilinear(object), error = function(e) NULL)
+  else NULL
+  have_joint <- !is.null(jcmsep)
+
+  d_c_ab <- dim(Ab.lv)[1L]
+
+  ## Which standard dims have a valid Ab.lv entry (b_z VA covariance exists)
+  valid_l  <- ablv_for_std >= 1L & ablv_for_std <= d_c_ab
+  bz_dims  <- which(valid_l)   # indices in standard order with b_z
+
+  ## Valid (non-deterministic theta) dims — where a_lv_sp VA covariance exists
+  valid  <- which(ia_for_std > 0L)
+  ia_val <- ia_for_std[valid]
+  L_val  <- L[, valid, drop = FALSE]   # Kz × n_valid
+
+  ## Position of valid dims within bz_dims (for the Isserlis tr terms)
+  ## valid ⊆ 1..d_act = bz_dims in all typical cases
+  valid_in_bz <- match(valid, bz_dims)
 
   se_mat <- matrix(0, p, Kz)
   rownames(se_mat) <- if (!is.null(colnames(object$y))) colnames(object$y) else paste0("sp", seq_len(p))
   colnames(se_mat) <- if (!is.null(rownames(L))) rownames(L) else paste0("cov", seq_len(Kz))
 
-  ## Valid (non-deterministic theta) dims
-  valid  <- which(ia_for_std > 0L)
-  ia_val <- ia_for_std[valid]
-  L_val  <- L[, valid, drop = FALSE]   # Kz × n_valid
-
   for (k in seq_len(Kz)) {
-    lk <- L_val[k, ]   # n_valid elements
+    lk <- L_val[k, ]   # LvXcoef[k, valid] = sigma*b_z_hat[k, valid]
 
-    ## Term 1: theta uncertainty (same as .ho_RRse for the valid dims)
-    if (is_full) {
-      var_theta <- vapply(seq_len(p), function(j) {
-        Bj <- B_out[j, ia_val, ia_val, drop = FALSE]
-        as.numeric(t(lk) %*% matrix(Bj, length(ia_val), length(ia_val)) %*% lk)
+    if (have_joint) {
+      n_bz <- jcmsep$n_bz
+      jmat <- jcmsep$joint
+
+      ## Indices of b_z[k, bz_dims] in the joint CMSEP (b_z block, col-major)
+      bz_idx_k <- (ablv_for_std[bz_dims] - 1L) * Kz + k   # length(bz_dims)
+
+      ## sigma-scaled b_z sub-block (constant across species j):
+      ## Sff[l,l'] = sigma_l * sigma_l' * Cov_CMSEP(b_z[k,l], b_z[k,l'])
+      sigma_f <- sigma_std[bz_dims]
+      Sff     <- outer(sigma_f, sigma_f) * jmat[bz_idx_k, bz_idx_k, drop = FALSE]
+
+      ## Per-species quantities that depend on species j
+      var_jk <- vapply(seq_len(p), function(j) {
+        ## Indices of a_lv_sp[j, ia_val] in the joint CMSEP (asp block, col-major)
+        asp_j_idx <- n_bz + (ia_val - 1L) * p + j   # length(valid)
+
+        ## a_lv_sp sub-block (NOT sigma-scaled; theta is already unscaled a_lv_sp)
+        Sgg <- jmat[asp_j_idx, asp_j_idx, drop = FALSE]
+
+        ## Cross-block: Sfg[l,l'] = sigma_l * Cov_CMSEP(b_z[k,l], a_lv_sp[j,ia(l')])
+        ## (sigma_l on the b_z side only; a_lv_sp enters unscaled via lk)
+        Sfg <- outer(sigma_f, rep(1, length(valid))) *
+               jmat[bz_idx_k, asp_j_idx, drop = FALSE]
+
+        ## Gradients of beta_jk = sum_l LvXcoef[k,l] * theta[j,l]:
+        ##   d/d(b_z[k,l])      = sigma_l * theta[j,l]  (stored in sigma_f * theta[j,l])
+        ##   d/d(a_lv_sp[j,ia]) = LvXcoef[k,l] = lk
+        grad_f <- theta[j, bz_dims]   # unscaled a_lv_sp (sigma absorbed in Sff)
+        grad_g <- lk                  # sigma-scaled b_z means
+
+        ## Isserlis formula for Var(f^T g) with jointly Gaussian (f, g):
+        ##   Delta terms: grad_f^T Sff grad_f  +  grad_g^T Sgg grad_g  +  2 grad_f^T Sfg grad_g
+        ##   Trace terms: sum(Sff_valid * Sgg)  +  sum(Sfg_valid * t(Sfg_valid))
+        ## where "valid" restricts to dims where BOTH f and g have VA variance
+        t3  <- as.numeric(t(grad_f) %*% Sff %*% grad_f)
+        t1  <- as.numeric(t(grad_g) %*% Sgg %*% grad_g)
+        tc  <- 2 * as.numeric(t(grad_f) %*% Sfg %*% grad_g)
+        ## Isserlis trace terms — only over dims where g has VA variance (valid dims)
+        Sff_v   <- Sff[valid_in_bz, valid_in_bz, drop = FALSE]
+        Sfg_v   <- Sfg[valid_in_bz,  , drop = FALSE]
+        t2a <- sum(Sff_v * Sgg)
+        t2b <- sum(Sfg_v * t(Sfg_v))
+        t1 + t3 + tc + t2a + t2b
       }, numeric(1))
+
     } else {
-      var_theta <- as.vector(B_diag[, ia_val, drop = FALSE] %*% lk^2)
+      ## Fallback: VA-only, no CMSEP correction, dims independent.
+      ## Var(beta_jk) = sum_l [E[f_l]^2 Var(g_l) + E[g_l]^2 Var(f_l) + Var(f_l)Var(g_l)]
+      var_f_k <- numeric(d_act)   # Var(sigma_l * b_z[k,l]) from Ab.lv diagonal
+      for (l in bz_dims) {
+        al <- ablv_for_std[l]
+        var_f_k[l] <- sig2[l] * matrix(Ab.lv[al, , ], Kz, Kz)[k, k]
+      }
+      var_jk <- vapply(seq_len(p), function(j) {
+        t1  <- sum(lk^2 * B_diag[j, ia_val])                       # E[f]^2 Var(g)
+        t3  <- sum(theta[j, bz_dims]^2 * var_f_k[bz_dims])         # E[g]^2 Var(f)
+        t2  <- sum(var_f_k[valid] * B_diag[j, ia_val])             # Var(f)Var(g)
+        t1 + t2 + t3
+      }, numeric(1))
     }
 
-    ## Term 2: var_f × var_g (only for valid ia dims)
-    var_fvg <- numeric(p)
-    for (v in seq_along(valid)) {
-      l  <- valid[v]
-      ia <- ia_val[v]
-      var_fvg <- var_fvg + var_f[l, k] * B_diag[, ia]
-    }
-
-    ## Term 3: var_f × E[g]^2 (all dims — even deterministic theta from traits)
-    var_feg2 <- numeric(p)
-    for (l in seq_len(d_act)) {
-      var_feg2 <- var_feg2 + var_f[l, k] * theta[, l]^2
-    }
-
-    se_mat[, k] <- sqrt(pmax(0, var_theta + var_fvg + var_feg2))
+    se_mat[, k] <- sqrt(pmax(0, var_jk))
   }
   se_mat
 }

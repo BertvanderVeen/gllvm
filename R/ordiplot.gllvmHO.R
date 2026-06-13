@@ -451,15 +451,48 @@ ordiplot.gllvmHO <- function(object,
         rownames(b_z_full) %||% paste0("cov", seq_len(nrow(bz_sel)))
       bz_plot <- bz_sel[, c(xl, yl), drop = FALSE]
 
+      ## CI-based significance for b_z arrows: CMSEP-corrected covariance
+      ## (block-matrix formula D^{-1} + D^{-1} C A B D^{-1}, with D^{-1} ≈ Ab.lv)
+      ## when Hessian is available; falls back to VA posterior (Ab.lv diagonal) otherwise.
+      ## TMB column-major b_z order: [b_z[:,1], ..., b_z[:,d_c]], each col has Kz entries.
+      ## HO arrow order matches [RR|lvc] blocks (l=1..nRR then l=1..nlvc) of Ab.lv.
       sig_bz <- NULL
-      if (arrow.ci && !isFALSE(object$sd) &&
-          !is.null(object$sd) && !is.null(object$sd$b_z)) {
-        se_bz <- object$sd$b_z
-        if (ncol(se_bz) >= max(col_idx)) {
-          bz_raw  <- b_z_full[, col_idx, drop = FALSE][, c(xl, yl), drop = FALSE]
-          se_plot <- se_bz[,   col_idx, drop = FALSE][, c(xl, yl), drop = FALSE]
-          sig_bz  <- apply(abs(bz_raw) > 1.96 * abs(se_plot), 1, any)
+      if (arrow.ci && !is.null(object$Ab.lv)) {
+        z_crit <- qnorm(1 - (1 - level) / 2)
+        d_c_ab <- dim(object$Ab.lv)[1L]
+        Kz_ab  <- dim(object$Ab.lv)[2L]
+
+        ## Full CMSEP covariance matrix for b_z (Kz*d_c × Kz*d_c, col-major per dim)
+        cov_bz <- if (!is.null(object$Hess))
+          tryCatch(CMSEPf_HO_bz(object), error = function(e) NULL)
+        else NULL
+
+        ## Marginal SD for each b_z[q,l]: position in TMB vector = (l-1)*Kz + q (0-indexed)
+        ## = (l-1)*Kz_ab + q in 1-indexed R → se_bz_mat[q, l]
+        se_bz_mat <- matrix(NA_real_, Kz_ab, d_c_ab)
+        if (!is.null(cov_bz) && nrow(cov_bz) == Kz_ab * d_c_ab) {
+          diag_var <- pmax(0, diag(cov_bz))
+          for (l in seq_len(d_c_ab))
+            se_bz_mat[, l] <- sqrt(diag_var[(l - 1L) * Kz_ab + seq_len(Kz_ab)])
+        } else {
+          ## Fallback: VA posterior diagonal from Ab.lv
+          for (l in seq_len(d_c_ab)) {
+            m <- matrix(object$Ab.lv[l, , ], Kz_ab, Kz_ab)
+            se_bz_mat[, l] <- sqrt(pmax(0, diag(m)))
+          }
         }
+
+        ## Map Ab.lv dim index to HO column (Ab.lv is in HO [RR|lvc] order)
+        ## b_z_full HO col: l=1..nRR → Ab.lv l; l=nRR+1..nRR+nlvc → Ab.lv (l-nRR)+nRR... wait
+        ## Ab.lv index l goes 1..d_c_ab in HO order; b_z_full col in HO order = same l
+        se_bz_full <- matrix(NA_real_, nrow(b_z_full), d)
+        for (l in seq_len(d_c_ab))
+          if (l <= d) se_bz_full[, l] <- se_bz_mat[, l]
+
+        bz_raw  <- b_z_full[, col_idx, drop = FALSE][, c(xl, yl), drop = FALSE]
+        se_plot <- se_bz_full[, col_idx, drop = FALSE][, c(xl, yl), drop = FALSE]
+        ok      <- !is.na(se_plot) & se_plot > 0
+        sig_bz  <- apply(ok & abs(bz_raw) > z_crit * se_plot, 1, any)
       }
       .draw_arrows(bz_plot, col.arrow.bz, arrow.scale, cex.env, lab.dist,
                    lty = arrow.lty, sig = sig_bz)
@@ -484,15 +517,38 @@ ordiplot.gllvmHO <- function(object,
         rownames(b_gamma_full) %||% paste0("trait", seq_len(nrow(bg_sel)))
       bg_plot <- bg_sel[, c(xl, yl), drop = FALSE]
 
+      ## CI-based significance for b_gamma arrows: same CMSEP block-matrix formula
+      ## using CMSEPf_HO_bgamma; falls back to Ab.load VA diagonal if no Hessian.
       sig_bg <- NULL
-      if (arrow.ci && !isFALSE(object$sd) &&
-          !is.null(object$sd) && !is.null(object$sd$LoadTRcoef)) {
-        se_bg <- object$sd$LoadTRcoef
-        if (ncol(se_bg) >= max(col_idx)) {
-          bg_raw  <- b_gamma_full[, col_idx, drop = FALSE][, c(xl, yl), drop = FALSE]
-          se_plot <- se_bg[,        col_idx, drop = FALSE][, c(xl, yl), drop = FALSE]
-          sig_bg  <- apply(abs(bg_raw) > 1.96 * abs(se_plot), 1, any)
+      if (arrow.ci && !is.null(object$Ab.load)) {
+        z_crit <- qnorm(1 - (1 - level) / 2)
+        d_t_ab <- dim(object$Ab.load)[1L]
+        Kt_ab  <- dim(object$Ab.load)[2L]
+
+        cov_bg <- if (!is.null(object$Hess))
+          tryCatch(CMSEPf_HO_bgamma(object), error = function(e) NULL)
+        else NULL
+
+        se_bg_mat <- matrix(NA_real_, Kt_ab, d_t_ab)
+        if (!is.null(cov_bg) && nrow(cov_bg) == Kt_ab * d_t_ab) {
+          diag_var <- pmax(0, diag(cov_bg))
+          for (l in seq_len(d_t_ab))
+            se_bg_mat[, l] <- sqrt(diag_var[(l - 1L) * Kt_ab + seq_len(Kt_ab)])
+        } else {
+          for (l in seq_len(d_t_ab)) {
+            m <- matrix(object$Ab.load[l, , ], Kt_ab, Kt_ab)
+            se_bg_mat[, l] <- sqrt(pmax(0, diag(m)))
+          }
         }
+
+        se_bg_full <- matrix(NA_real_, Kt_ab, d)
+        for (l in seq_len(d_t_ab))
+          if (l <= d) se_bg_full[, l] <- se_bg_mat[, l]
+
+        bg_raw  <- b_gamma_full[, col_idx, drop = FALSE][, c(xl, yl), drop = FALSE]
+        se_plot <- se_bg_full[, col_idx, drop = FALSE][, c(xl, yl), drop = FALSE]
+        ok      <- !is.na(se_plot) & se_plot > 0
+        sig_bg  <- apply(ok & abs(bg_raw) > z_crit * se_plot, 1, any)
       }
       .draw_arrows(bg_plot, col.arrow.bgamma, arrow.scale, cex.env, lab.dist,
                    lty = arrow.lty, sig = sig_bg)

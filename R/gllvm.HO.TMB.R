@@ -868,6 +868,7 @@ gllvm.HO.TMB <- function(
       seq_len(d_active)
     }
     LvXcoef_mat <- t(t(b_z_hat[, lvx_cols_ho, drop = FALSE]) * sigma_hat[lvx_cols_ho])
+    rownames(LvXcoef_mat) <- colnames(as.matrix(lv.X))
   } else {
     LvXcoef_mat <- NULL
   }
@@ -884,7 +885,7 @@ gllvm.HO.TMB <- function(
     random.loadings = TRUE,
     ## lvs: raw VA posterior means u_hat, n × d_va_z
     lvs          = lvs_std,
-    params       = list(
+    params       = Filter(Negate(is.null), list(
       beta0    = b_hat[1, ],
       Xcoef    = if (Kx > 1) t(b_hat[-1, , drop = FALSE]) else NULL,
       sigma.lv = sigma_hat,
@@ -895,7 +896,11 @@ gllvm.HO.TMB <- function(
       zeta     = if (has_ordinal && length(zeta_hat) > 0L) zeta_hat else NULL,
       phi      = if (length(lgphi_hat) > 0L) exp(lgphi_hat) else NULL,
       inv.phi  = if (length(lgphi_hat) > 0L) 1 / exp(lgphi_hat) else NULL,
-      LoadTRcoef = if (Kt > 0L) matrix(par_lst$b_gamma, Kt, d) else NULL,
+      LoadTRcoef = if (Kt > 0L) {
+        m <- matrix(par_lst$b_gamma, Kt, d)
+        rownames(m) <- colnames(as.matrix(TR))
+        m
+      } else NULL,
       ## sigma.bz / sigma.bgamma: only the lvc entries (RR entries are fixed to 1)
       sigma.bz = {
         n_rr_bz  <- min(num.RR, d_c)
@@ -922,7 +927,7 @@ gllvm.HO.TMB <- function(
       sigma = if (has_random_re) {
         exp(par_hat[names(par_hat) == "log_sigma"])
       } else NULL
-    ),
+    )),
     ## Variational covariances (VA dims only: d_va_z / d_va_a)
     Lambda.struc = Lambda.struc,
     A            = A_out,
@@ -955,6 +960,7 @@ gllvm.HO.TMB <- function(
     optim.method = "nlminb",
     Ntrials      = Ntrials,
     offset       = offset_mat,
+    start.params = sv,
     call         = if (!is.null(call.)) call. else match.call()
   )
   if (!is.null(opt$par)) out$TMBfn$par <- opt$par
@@ -1315,9 +1321,11 @@ summary.gllvmHO <- function(object,
     )
   }
 
-  ## LV predictor coefficient table (LvXcoef — canonical covariate effects)
+  ## LV predictor coefficient table (LvXcoef — canonical covariate effects).
+  ## Only shown when randomB = FALSE (fixed b_z); when randomB = "LV", b_z is
+  ## a random effect whose uncertainty is reported via sigma.bz / REbcovs instead.
   Coef.tableLV <- NULL
-  if (!is.null(object$params$LvXcoef)) {
+  if (!is.null(object$params$LvXcoef) && isFALSE(object$randomB)) {
     L      <- object$params$LvXcoef   # Kz × d_act
     d_act  <- nRR + nlvc
     lvxn   <- if (!is.null(object$lv.X)) colnames(object$lv.X) else
