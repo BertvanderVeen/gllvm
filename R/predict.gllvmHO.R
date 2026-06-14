@@ -199,6 +199,8 @@ perturb_gllvmHO <- function(object, params, r, skeleton = NULL, template = NULL)
   ## --- VA: species loadings (a_lv_sp) → theta ---
   if (!is.null(params$a_sim) && d_va_a > 0L) {
     a_r <- matrix(params$a_sim[r, ], nrow = p, ncol = d_va_a)
+    ## Diagonal is stored on log scale for sign identification; back-transform here.
+    for (ia in seq_len(d_va_a)) if (ia <= p) a_r[ia, ia] <- exp(a_r[ia, ia])
 
     ## Determine LoadTRcoef to use for RR dims (fixed or VA-drawn)
     bg_curr <- if (!is.null(params$bg_sim)) {

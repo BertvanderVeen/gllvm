@@ -122,7 +122,7 @@ gllvm.HO.TMB <- function(
   if (length(Ntrials) == 1L) Ntrials <- matrix(as.integer(Ntrials), n, p)
 
   ## ---- Starting values ------------------------------------------------
-  link_y <- .ho_link_residuals(y, fam_int, Xmat)
+  link_y <- .ho_link_residuals(y, family, fam_int, Xmat, Ntrials)
 
   starting.val <- match.arg(starting.val, c("res", "zero", "random"))
 
@@ -158,16 +158,14 @@ gllvm.HO.TMB <- function(
                                     p, d_va_a)
   }
 
-  ## Scale sigma_1 down when both lvc b_z and b_gamma are active.
-  ## The SVD singular values reflect the total variation in link(Y), which includes
-  ## variation that in the model is absorbed by b_z and b_gamma.  In particular,
-  ## lvc_z_var_i = x_i^T Var_q(b_z) x_i scales with ||x_i||^2 and
-  ## lvc_g_var_j = t_j^T Var_q(b_gamma) t_j scales with ||t_j||^2, so the bilinear
-  ## form integral (log-link ck = 1 - sigma^2 * u_z * v_g > 0) can be violated at
-  ## initial values when lv.X or TR are not standardised.
-  ## Dividing sigma by ||lv.X||_rms * ||TR||_rms ensures the initial ck > 0.
-  if (!is.null(lv.X) && (d_c - min(d_c, num.RR)) > 0L &&
-      !is.null(TR)   && (d_t - min(d_t, num.RR)) > 0L) {
+  ## Scale sigma_1 down whenever both lv.X and TR are active (RR or lvc).
+  ## The SVD singular values can be large when RQR residuals are used (N(0,1)
+  ## entries give singular values ~sqrt(n)+sqrt(p)), making b_z/b_gamma large.
+  ## Combined with an unstandardised lv.X or TR, eta = sigma * z * gamma can
+  ## overflow for log-link families, and the bilinear ck condition
+  ## (ck = 1 - sigma^2 * u_z * v_g > 0) can be violated for lvc dims.
+  ## Dividing sigma by ||lv.X||_rms * ||TR||_rms ensures a finite initial NLL.
+  if (d_c > 0L && d_t > 0L) {
     lv_X_rms  <- sqrt(mean(rowSums(as.matrix(lv.X)^2)))
     TR_rms    <- sqrt(mean(rowSums(as.matrix(TR)^2)))
     scale_adj <- max(1, lv_X_rms * TR_rms)
@@ -190,6 +188,19 @@ gllvm.HO.TMB <- function(
       if (ncol(sp_ld) == d_va_a) sv$a_sp <- sp_ld
       else if (ncol(sp_ld) >= d_va_a)
         sv$a_sp <- sp_ld[, seq_len(d_va_a), drop = FALSE]
+    }
+  }
+
+  ## Sign identification: a_lv_sp(ia, ia) is stored on log scale in C++.
+  ## Ensure diagonal starting values are positive; compensate with sign flip in u.
+  if (d_va_a > 0L && nrow(sv$a_sp) >= d_va_a) {
+    d_iz <- min(d_va_z, d_va_a)
+    for (ia in seq_len(d_va_a)) {
+      if (sv$a_sp[ia, ia] < 0) {
+        sv$a_sp[, ia] <- -sv$a_sp[, ia]
+        if (ia <= d_iz) sv$u[, ia] <- -sv$u[, ia]
+      }
+      sv$a_sp[ia, ia] <- log(max(abs(sv$a_sp[ia, ia]), 1e-6))
     }
   }
 
@@ -755,6 +766,9 @@ gllvm.HO.TMB <- function(
   u_hat      <- matrix(par_hat[names(par_hat) == "u"],    nrow = n,  ncol = d_va_z)
   Au_hat     <- par_hat[names(par_hat) == "Au"]
   alv_hat    <- matrix(par_hat[names(par_hat) == "a_lv_sp"], nrow = p, ncol = d_va_a)
+  ## Undo log-scale on diagonal (sign identification back-transform)
+  if (d_va_a > 0L && nrow(alv_hat) >= d_va_a)
+    for (ia in seq_len(d_va_a)) alv_hat[ia, ia] <- exp(alv_hat[ia, ia])
   Au_sp_hat  <- par_hat[names(par_hat) == "Au_sp"]
   sigLV_hat  <- par_hat[names(par_hat) == "sigmaLV"]
   zeta_hat   <- par_hat[names(par_hat) == "zeta"]
@@ -992,42 +1006,99 @@ gllvm.HO.TMB <- function(
 
 ## Helper: compute link-scale residuals from column-wise GLM intercepts
 #' @keywords internal
-.ho_link_residuals <- function(y, fam_int, Xmat) {
+.ho_link_residuals <- function(y, family, fam_int, Xmat, Ntrials = matrix(1L)) {
   n <- nrow(y); p <- ncol(y)
-  beta0 <- numeric(p)
-  resid <- matrix(0, n, p)
+  beta0  <- numeric(p)
+  mu_mat <- matrix(0, n, p)
+  phi    <- rep(1, p)
 
   for (j in seq_len(p)) {
-    yj <- y[, j]
-    ok <- !is.na(yj)
-    fj <- fam_int[j]
+    yj  <- y[, j]; ok <- !is.na(yj); yok <- yj[ok]
+    fj  <- fam_int[j]
 
-    # Fit species-wise GLM intercept
-    if (fj == 0L || fj == 6L) {            # Poisson / ZIP
-      mu_j  <- mean(yj[ok]) + 0.5
+    if (fj %in% c(0L, 6L)) {               # Poisson / ZIP
+      mu_j <- mean(yok) + 0.5
       beta0[j] <- log(mu_j)
-      resid[ok, j] <- log(pmax(yj[ok], 0.5)) - beta0[j]
-    } else if (fj == 3L) {                 # Gaussian
-      beta0[j] <- mean(yj[ok])
-      resid[ok, j] <- yj[ok] - beta0[j]
-    } else if (fj == 1L || fj == 11L) {    # NB / ZINB
-      mu_j <- mean(yj[ok]) + 0.5
+      mu_mat[ok, j] <- mu_j
+    } else if (fj %in% c(1L, 11L)) {       # NB / ZINB  (phi = 1/size)
+      mu_j <- mean(yok) + 0.5
       beta0[j] <- log(mu_j)
-      resid[ok, j] <- log(pmax(yj[ok], 0.5)) - beta0[j]
-    } else if (fj == 2L) {                 # Binomial (logit)
-      pj <- mean(yj[ok]) + 1e-3
-      pj <- min(pj, 1 - 1e-3)
+      mu_mat[ok, j] <- mu_j
+      v_j <- max(var(yok), mu_j + 1e-3)
+      phi[j] <- max((v_j - mu_j) / mu_j^2, 1e-3)
+    } else if (fj %in% c(2L, 13L, 14L)) {  # Binomial / ZIB / ZNIB
+      pj <- pmin(pmax(mean(yok), 1e-3), 1 - 1e-3)
       beta0[j] <- log(pj / (1 - pj))
-      resid[ok, j] <- log((pmax(yj[ok], 1e-3)) / (1 - pmin(yj[ok], 1 - 1e-3))) - beta0[j]
-    } else if (fj == 4L) {                 # Gamma (log link)
-      mu_j <- mean(yj[ok]) + 0.5
+      mu_mat[ok, j] <- pj
+    } else if (fj == 3L) {                  # Gaussian  (phi = sd)
+      mu_j <- mean(yok)
+      beta0[j] <- mu_j
+      mu_mat[ok, j] <- mu_j
+      phi[j] <- max(sd(yok), 1e-6)
+    } else if (fj == 4L) {                  # Gamma  (phi = shape)
+      mu_j <- max(mean(yok), 1e-6)
       beta0[j] <- log(mu_j)
-      resid[ok, j] <- log(pmax(yj[ok], 0.5)) - beta0[j]
-    } else {
+      mu_mat[ok, j] <- mu_j
+      phi[j] <- max(mu_j^2 / max(var(yok), 1e-6), 0.1)
+    } else if (fj %in% c(9L, 12L)) {       # Beta / orderedBeta  (phi = precision)
+      pj <- pmin(pmax(mean(yok), 1e-3), 1 - 1e-3)
+      beta0[j] <- log(pj / (1 - pj))
+      mu_mat[ok, j] <- pj
+      phi[j] <- max(pj * (1 - pj) / max(var(yok), 1e-6) - 1, 0.1)
+    } else if (fj == 8L) {                  # Exponential
+      mu_j <- max(mean(yok), 1e-6)
+      beta0[j] <- log(mu_j)
+      mu_mat[ok, j] <- mu_j
+    } else if (fj == 15L) {                 # Beta-Binomial  (phi = overdispersion)
+      pj <- pmin(pmax(mean(yok), 1e-3), 1 - 1e-3)
+      beta0[j] <- log(pj / (1 - pj))
+      mu_mat[ok, j] <- pj
+      phi[j] <- max(pj * (1 - pj) / max(var(yok), 1e-6) - 1, 0.1)
+    } else if (fj == 7L) {                  # Ordinal — mu not used; handled via zeta
       beta0[j] <- 0
-      resid[ok, j] <- yj[ok] - mean(yj[ok])
+      mu_mat[ok, j] <- mean(yok)
+    } else {                                # Tweedie, betaH, ...
+      mu_j <- max(mean(yok), 1e-6)
+      beta0[j] <- 0
+      mu_mat[ok, j] <- mu_j
     }
-    # Centre residuals
+  }
+
+  ## Zeta cutpoints for ordinal species from empirical logit(cumulative proportions)
+  ord_cols <- which(fam_int == 7L)
+  zeta <- NULL
+  if (length(ord_cols) > 0L) {
+    max_cuts <- max(sapply(ord_cols, function(j) {
+      yj <- y[!is.na(y[, j]), j]; length(unique(yj)) - 1L
+    }))
+    zeta <- matrix(NA_real_, p, max_cuts)
+    for (j in ord_cols) {
+      yj   <- y[, j]; yok  <- yj[!is.na(yj)]
+      cats <- sort(unique(yok)); K <- length(cats)
+      n_cut <- K - 1L
+      cum_props <- cumsum(tabulate(match(yok, cats))) / length(yok)
+      cum_props <- cum_props[-K]
+      zeta[j, seq_len(n_cut)] <- log(pmax(cum_props, 1e-4) / pmax(1 - cum_props, 1e-4))
+    }
+  }
+
+  eta_mat <- matrix(beta0, n, p, byrow = TRUE)
+
+  obj <- list(
+    y          = y,
+    Ntrials    = Ntrials,
+    family     = family,
+    params     = list(phi = phi, zeta = zeta, ZINB.phi = rep(0, p)),
+    zeta.struc = "species",
+    Power      = 1.5,
+    link       = rep("logit", p)
+  )
+
+  resid <- residuals.gllvm(obj, mu = mu_mat, eta.mat = eta_mat, replace = FALSE)$resi
+  resid[!is.finite(resid)] <- 0
+
+  for (j in seq_len(p)) {
+    ok <- !is.na(y[, j])
     resid[, j] <- resid[, j] - mean(resid[ok, j])
   }
 

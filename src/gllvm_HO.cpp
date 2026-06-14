@@ -161,6 +161,13 @@ Type objective_function<Type>::operator() ()
   int d_c = (Kz > 0 && Kz < d_active) ? Kz : (Kz > 0 ? d_active : 0);
   int d_t = (Kt > 0 && Kt < d_active) ? Kt : (Kt > 0 ? d_active : 0);
 
+  // Sign identification: for each VA-a dim ia, a_lv_sp(ia, ia) is stored on the
+  // log scale so that exp(a_lv_sp(ia, ia)) > 0 always, breaking the per-dimension
+  // sign symmetry (z_ik, gamma_jk) -> (-z_ik, -gamma_jk).
+  matrix<Type> a_lv_sp_id = a_lv_sp;
+  for (int ia = 0; ia < d_va_a && ia < p; ia++)
+    a_lv_sp_id(ia, ia) = exp(a_lv_sp(ia, ia));
+
   vector<Type> iphi = exp(lg_phi);
 
   parallel_accumulator<Type> nll(this);
@@ -407,7 +414,7 @@ Type objective_function<Type>::operator() ()
     }
     Type dev2 = Type(0);
     for (int ia = 0; ia < d_va_a; ia++) {
-      Type dv = a_lv_sp(j,ia) - mu_g(ia);
+      Type dv = a_lv_sp_id(j,ia) - mu_g(ia);
       dev2 += dv*dv;
     }
     // Cross-covariance correction: analogous to bz_cross for gamma_j with traits.
@@ -655,7 +662,7 @@ Type objective_function<Type>::operator() ()
       for (int k = 0; k < d; k++) {
         int ia = va_a_idx[k];
         if (ia >= 0) {
-          a_g(k) = a_lv_sp(j, ia);
+          a_g(k) = a_lv_sp_id(j, ia);
           v_g(k) = Aj_diag(j, ia);
           // lvc dim k with active b_gamma, randomT=1: add t_j^T Var_q(b_gamma[:,k]) t_j
           if (has_bg && k >= num_RR && k < num_RR + dt_lvc)
