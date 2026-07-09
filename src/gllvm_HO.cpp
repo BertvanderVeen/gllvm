@@ -721,20 +721,40 @@ Type objective_function<Type>::operator() ()
       // formula gives the same result as the per-dim T1-T5 scalar loop in that case.
       // (ms.Rmd eq solution for log-link; eq varbilinear for non-log-link)
       if (log_link) {
-        // C_ij = I − Σ A_j Σ A_i;  cQ = -0.5 log|C| + 0.5 a_i^T A_i (...)
-        // The integral converges iff C is positive definite (det(C) > 0).
-        // Guard: clamp det(C) away from zero/negative so log() and C^{-1} never receive
-        // degenerate input.  When det(C) <= 0 the cQ penalty grows large, driving the
-        // optimizer back into the feasible region.
-        matrix<Type> C = -(Mj * Ai_full);
+        // C_ij = I − Σ A_j Σ A_i;  cQ = -0.5 log|C| + (cross/quadratic terms).
+        // The bilinear-form MGF E[exp(z^T Σ γ)] exists only when C is positive definite.
+        matrix<Type> P = Mj * Ai_full;   // Σ A_j Σ A_i (PSD product: real, non-negative eigenvalues)
+        matrix<Type> C = -P;
         for (int k = 0; k < d; k++) C(k,k) += Type(1);
-        Type detC      = C.determinant();
-        Type detC_safe = CppAD::CondExpGt(detC, Type(1e-8), detC, Type(1e-8));
-        Type logdetC   = log(detC_safe);
-        // Regularize C diagonally when near-singular so inverse is always finite.
+
+        // --- Feasibility test (Stage 3) ---
+        // C is PD  <=>  every eigenvalue of P is < 1.  P is a product of PSD matrices, so its
+        // eigenvalues are real and >= 0; hence tr(P) = Σλ_k < 1  =>  λ_max < 1  =>  C PD.
+        // tr(P) is therefore an exact, AD-friendly feasibility measure.  (det(C) is NOT usable:
+        // once two eigenvalues exceed 1 it is positive again, so it cannot detect the
+        // deep-infeasible region.)  Unlike the quadratic response model in gllvm.cpp — where
+        // D >= 0 and the sign convention make the analogous matrix PD by construction — the
+        // bilinear form is a saddle and cannot be made feasible by construction, so we test it.
+        Type slack = Type(1) - P.trace();          // > 0  <=>  feasible
+
+        // Barrier added to nll:
+        //   * exactly 0 while slack >= feas_marg            -> no bias in the feasible interior;
+        //   * -log(slack/feas_marg) as slack -> 0+          -> strict repulsion at the boundary;
+        //   * + uncapped linear ramp once slack <= 0        -> any infeasible trial step (where
+        //     the likelihood genuinely diverges) is rejected outright, never scored.
+        Type feas_marg     = Type(0.05);
+        Type slack_for_log = CppAD::CondExpGt(slack, Type(1e-3), slack, Type(1e-3));
+        Type logbar = CppAD::CondExpLt(slack, feas_marg, -log(slack_for_log / feas_marg), Type(0));
+        Type ramp   = CppAD::CondExpLt(slack, Type(0), -slack, Type(0));
+        nll += logbar + Type(1e4) * ramp;
+
+        // Exact cQ in the feasible region.  C is genuinely PD there, so det(C) > 0 and the
+        // inverse is well conditioned; the small diagonal nudge only keeps log()/inverse()
+        // finite-valued for AD on infeasible trial steps, whose cQ is discarded below.
         matrix<Type> C_reg = C;
-        Type reg = CppAD::CondExpLt(detC, Type(1e-4), Type(1e-4) - detC + Type(1e-4), Type(0));
+        Type reg = CppAD::CondExpLt(slack, Type(1e-3), Type(1e-3) - slack, Type(0));
         for (int k = 0; k < d; k++) C_reg(k,k) += reg;
+        Type logdetC = log(C_reg.determinant());
         matrix<Type> Cinv = C_reg.inverse();
 
         matrix<Type> nu_sigma(d,1);
@@ -749,7 +769,9 @@ Type objective_function<Type>::operator() ()
         Type t1_t5 = Type(0.5) * (Ai_nu_sig.transpose() * Cinv_nu   )(0,0);  // 0.5 (A_i Σ a_g)^T C^{-1} Σ a_g
         Type t3    =              (Ai_nu_sig.transpose() * Cinv_Mj_va)(0,0);  // (A_i Σ a_g)^T C^{-1} Mj a_z
 
-        cq = -Type(0.5)*logdetC + t1_t5 + t2_t4 + t3;
+        Type cq_exact = -Type(0.5)*logdetC + t1_t5 + t2_t4 + t3;
+        // Discard the (fictional) cQ on infeasible steps; the barrier above carries nll there.
+        cq = CppAD::CondExpGt(slack, Type(0), cq_exact, Type(0));
       } else {
         // cQ = 0.5 Var_q(z_i^T Σ gamma_j) = 0.5 [ tr(Mi Aj) + a_g^T Mi a_g + a_z^T Mj a_z ]
         // (ms.Rmd eq varbilinear)
