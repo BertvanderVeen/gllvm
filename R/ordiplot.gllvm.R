@@ -169,6 +169,7 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
   if(type == "residual"|num.lv>0){
     # First create an index for the columns with unconstrained LVs
     sigma.lv <- NULL
+    if(is.matrix(object$params$sigma.lv)) object$params$sigma.lv <- sqrt(rowMeans(object$params$sigma.lv[, as.integer(object$lv.var.group), drop=FALSE]^2))
     if(num.lv.c>0&type=="residual"){
       # to have similar scaling to unconstrained LVs
       sigma.lv <- object$params$sigma.lv[1:num.lv.c]
@@ -415,6 +416,7 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
             #   A<-A*object$params$sigma.lv
             # }else{}            
             for(i in 1:Nlv){
+              if(is.matrix(object$params$sigma.lv)) diag(S)[1:num.lv.c] <- object$params$sigma.lv[1:num.lv.c, as.integer(object$lv.var.group)[keep_sites[i]]]
               A[i,,]<-S%*%A[i,,]%*%S
             }  
           }
@@ -544,6 +546,7 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
             diag(S)[1:num.lv.c] <- object$params$sigma.lv[1:num.lv.c]
             
             for(i in 1:Nlv){
+              if(is.matrix(object$params$sigma.lv)) diag(S)[1:num.lv.c] <- object$params$sigma.lv[1:num.lv.c, as.integer(object$lv.var.group)[keep_sites[i]]]
               A[i,,]<-S%*%A[i,,]%*%S
             }  
           }
@@ -593,6 +596,10 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
           }
         # col.ellips2=rep("grey",p)
         
+        if(is.matrix(object$params$sigma.lv)){
+          object$params$sigma.lv <- sqrt(rowMeans(object$params$sigma.lv[, as.integer(object$lv.var.group), drop=FALSE]^2))
+          object$sd$sigma.lv <- sqrt(rowMeans(object$sd$sigma.lv^2))
+        }
         covMload<-object$sd$theta%*%( diag(object$params$sigma.lv, length(object$params$sigma.lv)) ); #diag(covMT)=1
         diag(covMload)<-object$sd$sigma.lv
         covMload <- array(apply(covMload^2, 1, diag), dim = c(ncol(object$sd$theta),ncol(object$sd$theta),nrow(object$sd$theta)))

@@ -11,6 +11,7 @@
 #'  \item{trace }{trace of the residual covariance matrix, the total variance explained}
 #'  \item{var.q }{trace of the residual covariance matrix per latent variable, variance explained per latent variable}
 #'  \item{var.q2 }{trace of the squared term of the residual covariance matrix per latent variable, for quadratic responses. Variance explained per latent variable by the quadratic term}
+#'  \item{group }{for models fitted with \code{lv.var}, a list with the above components per group. The components above then use the residual variances averaged over sites}
 
 #' @details 
 #' Residual covariance matrix, storing information on species co-occurrence that is not explained by the environmental variables (if included), is calculated using the matrix of latent variables loadings, that is, \eqn{\Theta\Theta'}, and the dispersion parameter related to the distribution of choice, is applicable (e.g. in the case of negative-binomial distributed responses).
@@ -84,6 +85,18 @@ getResidualCov.gllvm = function(object, adjust = 1, x = NULL, ...)
   #backward compatibility
   opts <- list(...)
   if(length(object$family) != ncol(object$y)) object$family = rep(object$family,ncol(object$y)) [1:ncol(object$y)]
+  ResCov.group <- NULL
+  if(is.matrix(object$params$sigma.lv)){
+    sl <- object$params$sigma.lv
+    ResCov.group <- lapply(seq_len(ncol(sl)), function(g){
+      object$params$sigma.lv <- sl[,g]
+      object$lv.var.group <- NULL
+      getResidualCov(object, adjust = adjust, x = x, ...)
+    })
+    names(ResCov.group) <- colnames(sl)
+    object$params$sigma.lv <- sqrt(rowMeans(sl[, as.integer(object$lv.var.group), drop=FALSE]^2))
+    names(object$params$sigma.lv) <- rownames(sl)
+  }
   if("site.index"%in%names(opts)){
     site.index <- opts$site.index
     x <- object$lv.X.design[site.index[1],]
@@ -226,6 +239,7 @@ getResidualCov.gllvm = function(object, adjust = 1, x = NULL, ...)
   }else{
     out <- list(cov = ResCov, trace = sum(diag(ResCov)), var.q = NULL)  
   }
+  if(!is.null(ResCov.group)) out$group <- ResCov.group
   return(out)
 }
 

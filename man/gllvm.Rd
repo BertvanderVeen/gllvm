@@ -16,6 +16,7 @@ gllvm(
   num.RR = 0,
   lv.formula = NULL,
   lvCor = NULL,
+  lv.var = NULL,
   studyDesign = NULL,
   dist = list(matrix(0)),
   distLV = matrix(0),
@@ -79,6 +80,8 @@ gllvm(
 \item{lv.formula}{an object of class "formula" (or one that can be coerced to that class): defines the effects that inform the ordination axes in concurrent (\code{num.lv.c}) and/or constrained (\code{num.RR}) ordination. Accepts fixed effects or random effects, not both at the same time. Random effects formulation requires specifying the \code{randomB} argument.}
 
 \item{lvCor}{correlation structure for latent variables, defaults to \code{NULL} Correlation structure for latent variables can be defined via formula, eg. \code{~struc(1|groups)}, where option to 'struc' are \code{corAR1} (AR(1) covariance), \code{corExp} (exponentially decaying, see argument '\code{dist}'), \code{corCS} (compound symmetry), and \code{corMatern} (Matern covariance, see argument '\code{dist}'). The grouping variable needs to be included either in \code{studyDesign}. Not yet available in combination with \code{num.RR} or \code{TR}.}
+
+\item{lv.var}{formula with a single categorical variable from \code{X}, e.g. \code{~group}, giving group-specific residual standard deviations for the latent variables in concurrent ordination (\code{num.lv.c}). Defaults to \code{NULL}, a single residual standard deviation per latent variable. Not available in combination with \code{lvCor} or \code{TR}.}
 
 \item{studyDesign}{variables related to eg. sampling/study design, used for defining correlation structure of the latent variables and row effects.}
 
