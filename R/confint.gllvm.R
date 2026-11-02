@@ -161,6 +161,7 @@ confint.gllvm <- function(object, parm=NULL, level = 0.95, ...) {
       cal <- cal + num.lv #for sigma.lv
     }
     
+    if(is.matrix(object$params$sigma.lv)) cal <- cal + length(object$params$sigma.lv) - (num.lv+num.lv.c)
     if((num.lv.c+num.RR)>0&object$randomB==FALSE){
       rnames[-c(1:cal)][1:(ncol(object$lv.X.design)*(num.lv.c+num.RR))] <- paste(colnames(object$lv.X.design),"LV",rep(1:(num.lv.c+num.RR),each=ncol(object$lv.X.design)),sep=".")
       cal<-cal + ncol(object$lv.X.design)*(num.lv.c+num.RR)
@@ -319,7 +320,9 @@ confint.gllvm <- function(object, parm=NULL, level = 0.95, ...) {
       
     }
     if("sigma.lv"%in%parm){
-      if(num.lv>0&num.lv.c>0){
+      if(is.matrix(object$params$sigma.lv)){
+        names(cilow)[gsub("sigma.lv.*","sigma.lv",names(unlist(object$sd[parm])))%in%"sigma.lv"]<-  paste("sigma", rep(rownames(object$params$sigma.lv), ncol(object$params$sigma.lv)), rep(colnames(object$params$sigma.lv), each=nrow(object$params$sigma.lv)), sep=".")
+      }else if(num.lv>0&num.lv.c>0){
         names(cilow)[gsub("sigma.lv.*","sigma.lv",names(unlist(object$sd[parm])))%in%"sigma.lv"]<-  c(paste("sigma.CLV", 1:num.lv.c, sep=""),paste("sigma.LV", 1:num.lv, sep=""))
       }else if(num.lv>0){
         names(cilow)[gsub("sigma.lv.*","sigma.lv",names(unlist(object$sd[parm])))%in%"sigma.lv"]<-  c(paste("sigma.LV", 1:num.lv, sep=""))

@@ -105,6 +105,7 @@ Type objective_function<Type>::operator() ()
   DATA_IVECTOR(cstruc); //correlation structure for row.params 0=indep sigma*I, 1=ar1, 2=exponentially decaying, 3=Compound Symm, 4= Matern
   DATA_STRUCT(proptoMats, gllvmutils::nesteddclist); //list of nested lists of length 2, first is the (inverse) matrix, second is the log determinant
   DATA_IVECTOR(cstruclv); //correlation structure for LVs 0=indep sigma*I, 1=ar1, 2=exponentially decaying, 3=Compound Symm, 4= Matern
+  DATA_IVECTOR(lvvar); //group index per site for group-specific residual SD of concurrent LVs, length n or 0
   DATA_STRUCT(dc, gllvmutils::dclist); //coordinates for sites, used for exponentially decaying cov. struc
   DATA_MATRIX(dc_lv); //coordinates for sites, used for exponentially decaying cov. struc
   DATA_INTEGER(Astruc); //Structure of the variational covariance, 0=diagonal, 1=RR, (2=sparse cholesky not implemented yet)
@@ -454,7 +455,26 @@ Type objective_function<Type>::operator() ()
       nll -= 0.5*n*nlvr;
       
       //scale LVs with standard deviations, as well as the VA covariance matrices
-      u *= Delta;
+      matrix<Type> Deltai(nlvr,nlvr);
+      for (int i=0; i<n; i++) {
+        Deltai = Delta;
+        if((lvvar.size()==n) && (num_lv_c>0)){
+          if(lvvar(i)>0){
+            for (int d=0; d<num_lv_c; d++){
+              Deltai(d,d) = fabs(sigmaLV(nlvr+(lvvar(i)-1)*num_lv_c+d));
+            }
+          }
+        }
+        u.row(i) = u.row(i)*Deltai;
+        if((num_RR*random(2))>0 && (quadratic)>0){
+          Deltai.conservativeResize(nlvr+num_RR,nlvr+num_RR);
+          for(int d=nlvr; d<(nlvr+num_RR); d++){
+            Deltai.col(d).setZero();
+            Deltai.row(d).setZero();
+          }
+        }
+        A(i) = Deltai*A(i);
+      }
       
       if((num_RR*random(2))>0 && (quadratic)>0){
         Delta.conservativeResize(nlvr+num_RR,nlvr+num_RR);
@@ -5368,7 +5388,15 @@ Type objective_function<Type>::operator() ()
         }
       }
       //variances of LVs
-      u *= Delta;
+      for (int i=0; i<n; i++) {
+        for (int d=0; d<nlvr; d++){
+          if((lvvar.size()==n) && (d<num_lv_c) && (lvvar(i)>0)){
+            u(i,d) *= fabs(sigmaLV(nlvr+(lvvar(i)-1)*num_lv_c+d));
+          } else {
+            u(i,d) *= Delta(d,d);
+          }
+        }
+      }
       if(num_lv_c>0){
         matrix<Type> b_lv2(x_lv.cols(),nlvr);
         

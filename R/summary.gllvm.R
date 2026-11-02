@@ -411,10 +411,20 @@ summary.gllvm <- function(object, by = "all", digits = max(3L, getOption("digits
   if((num.lv+num.lv.c)>0){
     
     #add zeros for num.rr
+    if(is.matrix(object$params$sigma.lv)){
+      sl <- object$params$sigma.lv
+      sl <- rbind(sl[1:num.lv.c,,drop=FALSE], matrix(0, num.RR, ncol(sl)), if(num.lv>0)sl[-c(1:num.lv.c),,drop=FALSE])
+      if(rotate){
+        sl <- apply(sl, 2, function(x)sqrt(diag(t(svd_rotmat_sites)%*%diag(x^2, ncol = num.lv+num.lv.c+num.RR, nrow = num.lv+num.lv.c+num.RR)%*%svd_rotmat_sites)))
+      }
+      rownames(sl) <- c(paste0("CLV", 1:num.lv.c), if(num.RR>0)paste0("CLV", num.lv.c+1:num.RR), if(num.lv>0)paste0("LV", 1:num.lv))
+      object$params$sigma.lv <- sl
+    }else{
     object$params$sigma.lv <- c(object$params$sigma.lv[1:num.lv.c],rep(0,num.RR), if(num.lv>0)object$params$sigma.lv[-c(1:(num.lv.c+num.RR))])
     
     if(rotate){
       object$params$sigma.lv <- sqrt(diag(t(svd_rotmat_sites)%*%diag(object$params$sigma.lv^2, ncol = num.lv+num.lv.c+num.RR, nrow = num.lv+num.lv.c+num.RR)%*%svd_rotmat_sites))
+    }
     }
     sumry$sigma.lv <- object$params$sigma.lv
   }
@@ -446,10 +456,15 @@ print.summary.gllvm <- function (x, ...)
     cat("Unconstrained LVs: ", x$num.lv, "\n")
   }
   #this scenario we don't want the SD from num.lv as it is meaningless
+  if(is.matrix(x$sigma.lv)){
+    if(x$num.lv>0&(x$num.RR+x$num.lv.c)>0 & isFALSE(x$quadratic))x$sigma.lv <- x$sigma.lv[1:(x$num.lv.c+x$num.RR),,drop=FALSE]
+    if((x$num.lv.c)>0|!isFALSE(x$quadratic)){cat("Residual standard deviation of LVs per group:\n");print(zapsmall(x$sigma.lv,x$digits));cat("\n")}else{cat("\n")}
+  }else{
   if(x$num.lv>0&(x$num.RR+x$num.lv.c)>0 & isFALSE(x$quadratic))x$sigma.lv <- x$sigma.lv[1:(x$num.lv.c+x$num.RR)]
   
   #only print SD from LV if model is quadratic or if (hybrid) concurrent
   if((x$num.lv.c)>0|!isFALSE(x$quadratic)){cat("Residual standard deviation of LVs: ", zapsmall(x$sigma.lv,x$digits),"\n\n")}else{cat("\n")}
+  }
   
   if(!grepl('glmmVA',deparse1(x$Call))){
   cat("Formula: ", paste(x$formula, collapse = ""), "\n")

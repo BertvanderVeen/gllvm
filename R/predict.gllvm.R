@@ -266,39 +266,54 @@ predict.gllvm <- function(object, newX = NULL, newTR = NULL, newLV = NULL, type 
             stop("Number of rows in newLV must equal to the number of rows in newX, if newX is included, otherwise same as number of rows in the response matrix.")
         }
         
+        lvgroup <- object$lv.var.group
+        if (!is.null(newdata) && !is.null(object$lv.var)) {
+          lvgroup <- factor(as.data.frame(newdata)[[all.vars(object$lv.var)]], levels = levels(object$lv.var.group))
+          if (anyNA(lvgroup)) stop("The variable in 'lv.var' is missing from 'newX', or has levels not present in the fitted model.")
+        }
+        if(is.matrix(object$params$sigma.lv)){
+          S <- t(object$params$sigma.lv[, as.integer(lvgroup), drop = FALSE])
+        }else{
+          S <- matrix(object$params$sigma.lv, nrow(newLV), ncol(newLV), byrow = TRUE)
+        }
         if (object$num.RR == 0) {
-          lvs <- t(t(newLV) * object$params$sigma.lv)
+          lvs <- newLV * S
         } else {
           if (object$num.lv.c > 0) {
-            lvs <- cbind(t(t(newLV[, 1:object$num.lv.c]) * 
-                             object$params$sigma.lv[1:object$num.lv.c]), 
+            lvs <- cbind(newLV[, 1:object$num.lv.c, drop = FALSE] * 
+                             S[, 1:object$num.lv.c, drop = FALSE], 
                          matrix(0, ncol = object$num.RR, nrow = n), 
-                         t(t(newLV[, -c(1:object$num.lv.c)]) * 
-                             object$params$sigma.lv[-(1:object$num.lv.c)]))
+                         newLV[, -c(1:object$num.lv.c), drop = FALSE] * 
+                             S[, -c(1:object$num.lv.c), drop = FALSE])
           }
           else if (object$num.lv > 0 & object$num.lv.c == 0) {
             lvs <- cbind(matrix(0, ncol = object$num.RR, 
-                                nrow = n), t(t(newLV) * object$params$sigma.lv))
+                                nrow = n), newLV * S)
           } else {
             lvs <- matrix(0, ncol = object$num.RR, nrow = n)
           }
         }
         
       } else {
+        if(is.matrix(object$params$sigma.lv)){
+          S <- t(object$params$sigma.lv[, as.integer(object$lv.var.group), drop = FALSE])
+        }else{
+          S <- matrix(object$params$sigma.lv, nrow(object$lvs), ncol(object$lvs), byrow = TRUE)
+        }
         if (object$num.RR == 0) {
-          lvs <- t(t(object$lvs) * object$params$sigma.lv)
+          lvs <- object$lvs * S
         } else {
           if (object$num.lv.c > 0) {
-            lvs <- cbind(t(t(object$lvs[, 1:object$num.lv.c]) * 
-                             object$params$sigma.lv[1:object$num.lv.c]), 
+            lvs <- cbind(object$lvs[, 1:object$num.lv.c, drop = FALSE] * 
+                             S[, 1:object$num.lv.c, drop = FALSE], 
                          matrix(0, ncol = object$num.RR, nrow = n), 
-                         t(t(object$lvs[, -c(1:object$num.lv.c)]) * 
-                             object$params$sigma.lv[-c(1:object$num.lv.c)]))
+                         object$lvs[, -c(1:object$num.lv.c), drop = FALSE] * 
+                             S[, -c(1:object$num.lv.c), drop = FALSE])
           }
           else if (object$num.lv > 0 & object$num.lv.c == 
                    0) {
             lvs <- cbind(matrix(0, ncol = object$num.RR, 
-                                nrow = n), t(t(object$lvs) * object$params$sigma.lv))
+                                nrow = n), object$lvs * S)
           }
           else {
             lvs <- matrix(0, ncol = object$num.RR, nrow = n)
@@ -784,8 +799,13 @@ perturb.gllvm <- function(object, params, r, type = "response", skeleton = NULL,
     }
 
     if((num.lv + num.lv.c) > 0){
-      newobject$params$sigma.lv <- abs(newpars$sigmaLV)
-      names(newobject$params$sigma.lv) <- names(object$params$sigma.lv)
+      if(is.matrix(object$params$sigma.lv)){
+        newobject$params$sigma.lv[] <- abs(newpars$sigmaLV)[1:(num.lv+num.lv.c)]
+        newobject$params$sigma.lv[1:num.lv.c, -1] <- abs(newpars$sigmaLV)[-(1:(num.lv+num.lv.c))]
+      }else{
+        newobject$params$sigma.lv <- abs(newpars$sigmaLV)
+        names(newobject$params$sigma.lv) <- names(object$params$sigma.lv)
+      }
     }
     
     if((num.lv + num.lv.c + num.RR) > 0){

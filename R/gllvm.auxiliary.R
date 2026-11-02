@@ -2081,8 +2081,14 @@ sdrandom<-function(obj, Vtheta, incl, ignore.u = FALSE,return.covb = FALSE, type
   p <- ncol(obj$env$data$y)
   lv.X.design <- obj$env$data$x_lv
   
+  sigma.site <- NULL
   if((num.lv+num.lv.c)>0){
     sigma.lv <- abs(obj$par[names(obj$par)=="sigmaLV"])  
+    if(length(obj$env$data$lvvar)==n && num.lv.c>0){
+      sigma.site <- matrix(sigma.lv[1:num.lv.c], n, num.lv.c, byrow = TRUE)
+      for(g in which(obj$env$data$lvvar>0)) sigma.site[g,] <- sigma.lv[(num.lv+num.lv.c)+(obj$env$data$lvvar[g]-1)*num.lv.c+1:num.lv.c]
+      sigma.lv <- sigma.lv[1:(num.lv+num.lv.c)]
+    }
   }
   
   diag.cov.random <- array(0,dim=c(n,num.lv.c+num.lv+num.RR,num.lv.c+num.lv+num.RR))
@@ -2138,6 +2144,8 @@ sdrandom<-function(obj, Vtheta, incl, ignore.u = FALSE,return.covb = FALSE, type
     }else if(num.RR>0){
       sigma.lv <- rep(1,num.RR*(1-random[3]))
     }
+    sigvec <- rep(sigma.lv,each=nu)
+    if(!is.null(sigma.site)) sigvec <- c(sigma.site, rep(sigma.lv[-(1:num.lv.c)],each=nu))
     
     if(num.RR>0&random[3]==0){
       row.names(A)[row.names(A)==""] <- rep("XB",num.RR*nu)
@@ -2160,7 +2168,7 @@ sdrandom<-function(obj, Vtheta, incl, ignore.u = FALSE,return.covb = FALSE, type
     # if((num.lv+num.lv.c+radidx)>0){
     if((num.lv+num.lv.c)>0|any(random>0)){
       if(type=="conditional"|type=="marginal"&random[3]>0){
-        S <- diag(c(rep(1,radidx),rep(sigma.lv,each=nu)))
+        S <- diag(c(rep(1,radidx),sigvec))
         diag.term2 <- (Q+S%*%A)%*%Vtheta%*%t(Q+S%*%A)
         colnames(diag.term2)<-row.names(diag.term2)<-row.names(A)
       }else if(type=="residual"){
@@ -2215,7 +2223,7 @@ sdrandom<-function(obj, Vtheta, incl, ignore.u = FALSE,return.covb = FALSE, type
     colnames(diag.term2)<-rep("XB",n*(num.RR+num.lv.c))
   }
   if(type%in%c("conditional")){
-    S <- diag(c(rep(1,radidx),rep(sigma.lv,each=nu)))
+    S <- diag(c(rep(1,radidx),sigvec))
     diag.term1 <- S%*%diag.term1%*%S
     colnames(diag.term2)<-row.names(diag.term2)<-row.names(A)
   }
@@ -2539,16 +2547,22 @@ CMSEPf <- function(fit, return.covb = FALSE, type = NULL){
   }
   
   sigma.lv <- fit$params$sigma.lv
+  if(is.matrix(sigma.lv)){
+    sigma.c <- c(t(sigma.lv[1:num.lv.c, as.integer(fit$lv.var.group), drop=FALSE]))
+    sigma.lv <- sigma.lv[,1]
+  }else if(num.lv.c>0){
+    sigma.c <- rep(sigma.lv[1:num.lv.c],each=n_nlvc)
+  }
   
   #we never scale the prediction regions for num.lv by sigma.lv.
   if(num.lv.c>0&num.lv>0){
-    sigma.lv <- c(rep(sigma.lv[1:num.lv.c],each=n_nlvc), rep(rep(1,num.RR*ifelse(randomB==FALSE,1,0)),each=n), rep(rep(1,num.lv),each=n_nlv))
+    sigma.lv <- c(sigma.c, rep(rep(1,num.RR*ifelse(randomB==FALSE,1,0)),each=n), rep(rep(1,num.lv),each=n_nlv))
     # sigma.lv <- c(sigma.lv[1:num.lv.c],rep(1,num.RR*ifelse(randomB==FALSE,1,0)),rep(1,num.lv))
   }else if(num.lv>0&num.lv.c==0){
     sigma.lv <- c(rep(rep(1,num.RR*ifelse(randomB==FALSE,1,0)),each=n), rep(rep(1,num.lv),each=n_nlv))
     # sigma.lv <- c(rep(1,num.RR*ifelse(randomB==FALSE,1,0)),rep(1,num.lv))
   }else if(num.lv.c>0&num.lv==0){
-    sigma.lv <- c(rep(sigma.lv,each=n_nlvc), rep(rep(1,num.RR*ifelse(randomB==FALSE,1,0)),each=n))
+    sigma.lv <- c(sigma.c, rep(rep(1,num.RR*ifelse(randomB==FALSE,1,0)),each=n))
     # sigma.lv <- c(sigma.lv,rep(1,num.RR*ifelse(randomB==FALSE,1,0)))
   }else if(num.RR>0){
     sigma.lv <- c(rep(rep(1,num.RR*ifelse(randomB==FALSE,1,0)),each=n))

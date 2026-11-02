@@ -187,22 +187,27 @@ VP.gllvm <- function(object, group = NULL, groupnames=NULL, adj.cov = TRUE, grou
       if(object$num.lv>0)groupnamesF <- c(groupnamesF, paste0("LV", 1:object$num.lv))
       
       # lvs/unconstr. part
+      if(is.matrix(object$params$sigma.lv)){
+        S <- t(object$params$sigma.lv[, as.integer(object$lv.var.group), drop = FALSE])
+      }else{
+        S <- matrix(object$params$sigma.lv, nrow(object$lvs), ncol(object$lvs), byrow = TRUE)
+      }
       if (object$num.RR == 0) {
-        lvs <- t(t(object$lvs) * object$params$sigma.lv)
+        lvs <- object$lvs * S
         Z <- cbind(Z, lvs)
         CoefMat <- rbind(CoefMat, t(theta))
         LVgroups = c(1:ncol(lvs))
       } else {
         # To be checked:
         if (object$num.lv.c > 0) {
-            lvs <- cbind(t(t(object$lvs[, 1:object$num.lv.c, drop =FALSE]) * 
-                             object$params$sigma.lv[1:object$num.lv.c]), 
+            lvs <- cbind(object$lvs[, 1:object$num.lv.c, drop =FALSE] * 
+                             S[, 1:object$num.lv.c, drop = FALSE], 
                          matrix(0, ncol = object$num.RR, nrow = n), 
-                         t(t(object$lvs[, -c(1:object$num.lv.c), drop =FALSE]) * 
-                             object$params$sigma.lv[-(1:object$num.lv.c)]))
+                         object$lvs[, -c(1:object$num.lv.c), drop =FALSE] * 
+                             S[, -c(1:object$num.lv.c), drop = FALSE])
         } else if (object$num.lv > 0 & object$num.lv.c == 0) {
             lvs <- cbind(matrix(0, ncol = object$num.RR, 
-                        nrow = n), t(t(object$lvs) * object$params$sigma.lv))
+                        nrow = n), object$lvs * S)
         groupnamesF <- c(groupnamesF, paste0("LV", 1:object$num.lv))
         } else {
             lvs <- matrix(0, ncol = object$num.RR, nrow = n)
