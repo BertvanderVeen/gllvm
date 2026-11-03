@@ -810,7 +810,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
       col.eff.formula = allbars(formula)
       formula = nobars1_(formula)
       bar.f <- findbars1(col.eff.formula) # list with 3 terms
-      mf <- model.frame(subbars1(reformulate(sprintf("(%s)", sapply(findbars1(col.eff.formula), deparse1)))),data=data.frame(X.col.eff))
+      mf <- model.frame(subbars1(reformulate(sprintf("(%s)", sapply(findbars1(col.eff.formula), deparse1)), env = environment(col.eff.formula))),data=data.frame(X.col.eff))
       
       if(anyBars(formula) && is.null(X.col.eff) && (length(bar.f)>1 & bar.f[[1]]!=bquote(1|1))){
         stop("Covariates for species random effects must be provided.")
@@ -835,7 +835,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
         term <- terms(m1)
       } else if (is.null(TR)) {
         if (is.null(formula)&is.null(lv.formula)&(num.lv.c+num.RR)==0) {
-          ff <- formula(paste("~", "0", paste("+", colnames(X), collapse = "")))
+          ff <- formula(paste("~", "0", paste("+", colnames(X), collapse = "")), env = parent.frame())
           if (is.data.frame(X)) {
             datayx <- list(y = y, X = model.matrix(ff, X))
           } else {
@@ -847,9 +847,9 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
           
           if(inherits(row.eff,"formula")){
             if(any(colnames(X)==all.vars(row.eff))){
-              lv.formula <- formula(paste("~", paste(colnames(X[,-which(colnames(X)==all.vars(row.eff))]), collapse = "+")))              
+              lv.formula <- formula(paste("~", paste(colnames(X[,-which(colnames(X)==all.vars(row.eff))]), collapse = "+")), env = parent.frame())              
             }else{
-              lv.formula <- formula(paste("~", paste(colnames(X), collapse = "+")))
+              lv.formula <- formula(paste("~", paste(colnames(X), collapse = "+")), env = parent.frame())
             }
             
             lv.X <- model.frame(lv.formula, data.frame(X, check.names = FALSE))
@@ -867,7 +867,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
               X <- NULL 
             }
           }else{
-            lv.formula <- formula(paste("~", paste(colnames(X), collapse = "+")))
+            lv.formula <- formula(paste("~", paste(colnames(X), collapse = "+")), env = parent.frame())
             lv.X <- model.frame(lv.formula, data.frame(X, check.names = FALSE))
             # if (is.data.frame(X)) {
             #   datayx <- list(X = model.matrix(lv.formula, X)[,-1],drop=F)
@@ -917,7 +917,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
             labterm<-labterm[labterm!=1&labterm!=0]
           }
           
-          lv.formula <- formula(paste("~", paste(labterm, collapse = "+")))
+          lv.formula <- formula(paste("~", paste(labterm, collapse = "+")), env = environment(lv.formula))
           lv.X <- model.frame(lv.formula, data = datayx)
           lv.X.design <- model.matrix(lv.formula,data=datayx)#[,-1,drop=F]
           if(any(apply(lv.X.design, 2, function(x) all(x == 1)))){
@@ -927,7 +927,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
             if(isFALSE(randomB))stop("You forgot to set the 'randomB' argument.")
             if(!is.null(nobars1_(lv.formula)))stop("lv.formula cannot yet incorporate fixed and random effects at the same time.")
             bar.f <- findbars1(lv.formula) # list with 3 terms
-            lv.X <- model.frame(subbars1(reformulate(sprintf("(%s)", sapply(findbars1(lv.formula), deparse1)))),data=data.frame(datayx))
+            lv.X <- model.frame(subbars1(reformulate(sprintf("(%s)", sapply(findbars1(lv.formula), deparse1)), env = environment(lv.formula))),data=data.frame(datayx))
             nocorrLV <- corstruc(expandDoubleVerts2(lv.formula))
             RElistLV <- mkReTrms1(bar.f,lv.X) #still add find double bars
             RElistLV$cs <- csIndices(RElistLV$grps, nocorrLV)
@@ -951,7 +951,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
           if(any(labterm==1)|any(labterm==0)){
             labterm<-labterm[labterm!=1&labterm!=0]
           }
-          lv.formula <- formula(paste("~", paste(labterm, collapse = "+")))
+          lv.formula <- formula(paste("~", paste(labterm, collapse = "+")), env = environment(lv.formula))
           lv.X <- model.frame(lv.formula, data=datayx)
           lv.X.design <- model.matrix(lv.formula,data=datayx)#[,-1,drop=F]
           if(any(apply(lv.X.design, 2, function(x) all(x == 1)))){
@@ -961,7 +961,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
             if(isFALSE(randomB))stop("You forgot to set the 'randomB' argument.")
             if(!is.null(nobars1_(lv.formula)))stop("lv.formula cannot yet incorporate fixed and rando effects at the same time.")
             bar.f <- findbars1(lv.formula) # list with 3 terms
-            lv.X <- model.frame(subbars1(reformulate(sprintf("(%s)", sapply(findbars1(lv.formula), deparse1)))),data=data.frame(datayx))
+            lv.X <- model.frame(subbars1(reformulate(sprintf("(%s)", sapply(findbars1(lv.formula), deparse1)), env = environment(lv.formula))),data=data.frame(datayx))
             nocorrLV <- corstruc(expandDoubleVerts2(lv.formula))
             RElistLV<- mkReTrms1(bar.f,lv.X) #still add find double bars
             RElistLV$cs <- csIndices(RElistLV$grps, nocorrLV)
@@ -1145,7 +1145,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
         
         #remove redundant terms from formulas
         if(!is.null(lv.formula)){
-          lv.formula <- formula(paste("~",paste(attr(terms(lv.formula),"term.labels")[!attr(terms(lv.formula),"term.labels")%in%lv.X.red],collapse="+")))
+          lv.formula <- formula(paste("~",paste(attr(terms(lv.formula),"term.labels")[!attr(terms(lv.formula),"term.labels")%in%lv.X.red],collapse="+")), env = environment(lv.formula))
         }
       }
       }
@@ -1225,9 +1225,9 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
       form.parts <- strsplit(deparse1(row.form),split="\\+")[[1]]
       
       for(i in which(nested.parts))
-        form.parts[i] <- paste0("(", findbars1(formula(paste0("~",form.parts[i]))),")",collapse="+")
+        form.parts[i] <- paste0("(", findbars1(formula(paste0("~",form.parts[i]), env = environment(row.form))),")",collapse="+")
       
-      corstruc.form <- as.formula(paste0("~", paste0(form.parts,collapse="+")))
+      corstruc.form <- as.formula(paste0("~", paste0(form.parts,collapse="+")), env = environment(row.form))
       }else{
       corstruc.form <- row.form
       }
@@ -1376,9 +1376,9 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
           form.parts <- strsplit(deparse1(lv.form),split="\\+")[[1]]
           
           for(i in which(nested.parts))
-            form.parts[i] <- paste0("(", findbars1(formula(paste0("~",form.parts[i]))),")",collapse="+")
+            form.parts[i] <- paste0("(", findbars1(formula(paste0("~",form.parts[i]), env = environment(lv.form))),")",collapse="+")
           
-          corstruc.form <- as.formula(paste0("~", paste0(form.parts,collapse="+")))
+          corstruc.form <- as.formula(paste0("~", paste0(form.parts,collapse="+")), env = environment(lv.form))
         }else{
           corstruc.form <- lv.form
         }
