@@ -10,7 +10,7 @@ vignette: >
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, size="footnotesize", fig.width=5, fig.height=5, fig.align="center",dev="png", code.frame = TRUE, warning = FALSE, fig.pos='H')
+knitr::opts_chunk$set(echo = TRUE, size="footnotesize", fig.width=7, fig.height=7, dpi=150, fig.align="center",dev="png", code.frame = TRUE, warning = FALSE, fig.pos='H')
 ```
 
 
@@ -42,20 +42,20 @@ which includes six predictor variables: "soil.dry": soil dry mass, "bare.sand": 
 Let us first consider what constrained ordination actually is. We will do that by first shortly explaining reduced rank regression (RRR). First, consider the model:
 
 $$
-\eta_{ij} = \beta_{0j} + \boldsymbol{X}_i^\top\boldsymbol{\beta}_j.
+\eta_{ij} = \beta_{0j} + \textbf{x}_i^\top\boldsymbol{\beta}_j.
 $$
 
-Here, $\boldsymbol{\beta}_j$ are the slopes that represent a species responses to $p$ predictor variables at site $i$, $\boldsymbol{X}_i$. In the `gllvm` R-package, the code to fit this model is:
+Here, $\boldsymbol{\beta}_j$ are the slopes that represent a species responses to $p$ predictor variables at site $i$, $\textbf{X}_i$. In the `gllvm` R-package, the code to fit this model is:
 
 ```{r eval=FALSE}
 MGLM <- gllvm(Y, X = X, family = "poisson", num.lv = 0)
 ```
-where we set the number of unconstrained latent variables to zero, as it defaults to two. The "rank" of $\boldsymbol{X}_i^\top\boldsymbol{\beta}_j$ is $p$. Constrained ordination introduces a constraint on the species slopes matrix, namely on the number of independent columns in $\boldsymbol{\beta}_j$ (a column is not independent when it can be formulated as a linear combination of another). The reduced ranks are in community ecology referred to as ecological gradients, but can also be understood as ordination axes or latent variables. If we define a latent variable $\boldsymbol{z}_i = \boldsymbol{B}^\top\boldsymbol{X}_{i,lv} + \boldsymbol{\epsilon}_i$, for a $p\times d$ matrix of slopes, we can understand constrained ordination as a regression of the latent variable or ecological gradient, except that the residual $\boldsymbol{\epsilon}_i$ is omitted, i.e. we assume that the ecological gradient can be represented perfectly by the predictor variables, so that the model becomes:
+where we set the number of unconstrained latent variables to zero, as it defaults to two. The "rank" of $\textbf{X}_i^\top\boldsymbol{\beta}_j$ is $p$. Constrained ordination introduces a constraint on the species slopes matrix, namely on the number of independent columns in $\boldsymbol{\beta}_j$ (a column is not independent when it can be formulated as a linear combination of another). The reduced ranks are in community ecology referred to as ecological gradients, but can also be understood as ordination axes or latent variables. If we define a latent variable $\boldsymbol{z}_i = \boldsymbol{B}^\top\textbf{X}_{i,lv} + \boldsymbol{\epsilon}_i$, for a $p\times d$ matrix of slopes, we can understand constrained ordination as a regression of the latent variable or ecological gradient, except that the residual $\boldsymbol{\epsilon}_i$ is omitted, i.e. we assume that the ecological gradient can be represented perfectly by the predictor variables, so that the model becomes:
 \begin{equation}
-\eta_{ij} = \beta_{0j} + \boldsymbol{X}_i^\top\boldsymbol{B}\boldsymbol{\gamma}_j.
+\eta_{ij} = \beta_{0j} + \textbf{X}_i^\top\textbf{B}\boldsymbol{\gamma}_j.
 \end{equation}
 
-Where $\boldsymbol{B}$ is a $d \times K$ matrix of slopes per predictor and latent variable, and $\boldsymbol{\gamma}_j$ is a set of slopes for each species per latent variable. This parametrization is practically useful, as it drastically reduces the number of parameters compared to multivariate regression. The rank, number of latent variables or ordination axes, can be determined by cross-validation, or alternatively by using information criteria. The code for this in the `gllvm` R-package, for an arbitrary choice of two latent variables, is:
+Where $\textbf{B}$ is a $d \times K$ matrix of slopes per predictor and latent variable, and $\boldsymbol{\gamma}_j$ is a set of slopes for each species per latent variable. This parametrization is practically useful, as it drastically reduces the number of parameters compared to multivariate regression. The rank, number of latent variables or ordination axes, can be determined by cross-validation, or alternatively by using information criteria. The code for this in the `gllvm` R-package, for an arbitrary choice of two latent variables, is:
 
 ```{r eval=FALSE}
 RRGLM <- gllvm(Y, X = X, family = "poisson", num.RR = 2)
@@ -202,14 +202,101 @@ Finally, we can use all the other tools in the \texttt{gllvm} R-package for infe
 ordiplot(CGLLVM, biplot = TRUE)
 ```
 
-Arrows that show as less intense red (pink), are predictors of which the confidence interval for the slope includes zero, for at least one of the two plotted dimensions. There are various arguments included in the function to improve readability of the figure, have a look at its documentation. The arrows are always proportional to the size of the plot, so that the predictor with the largest slope estimate is the largest arrow. If the predictors have no effect, the slopes $\boldsymbol{B}$ will be close to zero.
+Arrows that show as less intense red (pink), are predictors of which the confidence interval for the slope includes zero, for at least one of the two plotted dimensions. There are various arguments included in the function to improve readability of the figure, have a look at its documentation. The arrows are always proportional to the size of the plot, so that the predictor with the largest slope estimate is the largest arrow. If the predictors have no effect, the slopes $\textbf{B}$ will be close to zero.
 
 It is also possible to use the `quadratic` flag to fit a quadratic response model though we will not demonstrate that here, or to partition variance per latent variable and for specific predictors.
+
+# Testing homogeneity of multivariate dispersion
+
+A popular approach for testing heterogeneity of dispersion of multivariate data is `vegan::betadisper` [@Anderson2006; @Anderson2006b]. In a model-based fashion, this can be incorporated straightforwardly by extending the standard concurrent ordination
+
+\begin{equation}
+\eta_{ij} = \beta_{0j} + \textbf{z}_i^\top\boldsymbol{\gamma}_j, \qquad  \boldsymbol{z}_i = \boldsymbol{B}^\top\textbf{X}_{i,lv} + \boldsymbol{\epsilon}_i.
+\end{equation}
+
+Typically, we assume $\epsilon_i \sim \mathcal{N}(\textbf{0},\boldsymbol{\sigma}^2\textbf{I}_d)$, where $\boldsymbol{\sigma}^2$ is a latent variable-sized vector of latent variable-level variances. In essence, we assume that the dispersion of all site scores is the same. Instead, heterogeneity of dispersion in the ordination requires assuming for some group-index $g$: $\epsilon_{ig} \sim \mathcal{N}(\textbf{0},\boldsymbol{\sigma}^2_g\textbf{I}_d)$, where $\boldsymbol{\sigma}^2_g$ is the latent variable-level group dispersion. Next, we can use `gllvm::anova` to test the hypothesis $\boldsymbol{\sigma}_g^2 = \boldsymbol{\sigma}^2$, i.e, we have an alternative to the classical test for homogeneity of group dispersions. We could even take this further and form a fixed effects (generalised linear model-type) regression for the group dispersions $\sigma_{ik} = \exp(\alpha_k + \textbf{x}_{\sigma,i}^\top\textbf{b}_{\sigma,k})$ (Conradi and van der Veen in prep.).
+
+A quick demonstration is as follows
+
+```{r testvar-data}
+library(gllvm)
+data(microbialdata)
+X <- microbialdata$Xenv
+cont <- c("SOM", "pH", "Phosp")
+
+# subtract each region's own mean, then divide by the overall sd
+# ensures the estimated centroids are in the right place of the ordination
+X[, cont] <- lapply(X[, cont], function(x) {
+    x <- x - ave(x, X$Region)
+    x / sd(x)
+})
+```
+
+```{r testvar-fit, eval=FALSE}
+homCGLLVM <- gllvm(microbialdata$Y, X, lv.formula = ~pH + SOM + Phosp+Region, num.lv.c = 2,
+            family = "negative.binomial",sd.errors=FALSE,optim.method="L-BFGS-B")
+hetCGLLVM <- gllvm(microbialdata$Y, X, lv.formula = ~pH + SOM + Phosp+Region, num.lv.c = 2,
+            family = "negative.binomial", lv.var = ~Region,sd.errors=FALSE,optim.method="L-BFGS-B")
+```
+
+```{r testvar-load, echo=FALSE}
+load("hetCGLLVM.RData")
+```
+
+```{r testvar}
+anova(homCGLLVM, hetCGLLVM)
+ordiplot(hetCGLLVM, fac.center = TRUE, s.colors = as.numeric(as.factor(X$Region)))
+```
+
+The likelihood ratio test clearly indicates that the model with region-specific dispersion is much better.
+
+Here, we centered the continuous covariates within-group (and standardised them), so that the estimated canonical coefficients for `Region` correspond to the group centroids. If we instead perform grand mean centering, the canonical coefficients represent the centroids for sites where the other covariates equal zero, which is probably not not what we want for our ordination. Note, this does not affect the model, or at least, not while we also have `Region` in `lv.formula`, as the group centroids absorb the difference, so that the within-group centering only represents a different parameterisation of the same model.
+
+We see an arch effect; the axes are folding due to non-linearity in species responses to the ordination. Let's adjust it with the quadratic response model in [the quadratic response model vignette](vignette5.html).
+
+```{r testvar-quad-fit, eval=FALSE}
+hetQCGLLVM <- gllvm(microbialdata$Y, X, lv.formula = ~pH + SOM + Phosp+Region, num.lv.c = 2,
+            family = "negative.binomial", lv.var = ~Region, sd.errors=FALSE, optim.method = "L-BFGS-B", quadratic = TRUE)
+```
+
+```{r testvar-quad}
+row.names(hetQCGLLVM$lvs)<-X$Region # for readability
+ordiplot(hetQCGLLVM, fac.center = TRUE, s.colors = as.numeric(as.factor(X$Region)))
+```
+
+In these models we tested both mean (`lv.formula` includes `Region`) and dispersion (`lv.var` includes `Region`) effects in the ordination. This corresponds classical test by Anderson et al., but we could of course choose to only test one or the other, as special cases.
 
 # References
 
 ---
 references:
+- id: Anderson2006
+  title: Distance-based tests for homogeneity of multivariate dispersions
+  author: 
+  - family: Anderson
+    given: M.J.
+  publisher: Biometrics
+  volume: 62
+  page: 245–253
+  type: article-journal
+  issued:
+    year: 2006
+- id: Anderson2006b
+  title: Multivariate dispersion as a measure of beta diversity
+  author: 
+  - family: Anderson
+    given: M.J.
+  - family: Ellingsen
+    given: K.E.
+  - family: McArdle
+    given: B.H.
+  publisher: Ecology Letters
+  volume: 9
+  page: 683–693
+  DOI: 10.1111/j.1461-0248.2006.00926.x
+  type: article-journal
+  issued:
+    year: 2006
 - id: vanderVeen2021b
   title: Concurrent ordination - simultaneous unconstrained and constrained latent variable modelling
   author: 
