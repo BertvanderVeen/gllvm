@@ -417,7 +417,15 @@ summary.gllvm <- function(object, by = "all", digits = max(3L, getOption("digits
       object$params$sigma.lv <- sqrt(diag(t(svd_rotmat_sites)%*%diag(object$params$sigma.lv^2, ncol = num.lv+num.lv.c+num.RR, nrow = num.lv+num.lv.c+num.RR)%*%svd_rotmat_sites))
     }
     sumry$sigma.lv <- object$params$sigma.lv
-    sumry$LvVarcoef <- object$params$LvVarcoef
+    if(!is.null(object$params$LvVarcoef) && !is.logical(object$sd) && !is.null(object$sd$LvVarcoef)){
+      pars <- c(object$params$LvVarcoef)
+      se <- c(object$sd$LvVarcoef)
+      zval <- pars/se
+      pvalue <- 2 * pnorm(-abs(zval))
+      coef.table.lvvar <- cbind(pars, se, zval, pvalue)
+      dimnames(coef.table.lvvar) <- list(paste(rownames(object$params$LvVarcoef),"(CLV",rep(1:ncol(object$params$LvVarcoef),each=nrow(object$params$LvVarcoef)),")",sep=""), c("Estimate", "Std. Error", "z value", "Pr(>|z|)"))
+      sumry$'Coef.tableLvVar' <- coef.table.lvvar
+    }
   }
   
   if((object$num.lv.c+object$num.RR)>0&!is.null(coef.table.constrained)){
@@ -451,7 +459,6 @@ print.summary.gllvm <- function (x, ...)
   
   #only print SD from LV if model is quadratic or if (hybrid) concurrent
   if((x$num.lv.c)>0|!isFALSE(x$quadratic)){cat("Residual standard deviation of LVs: ", zapsmall(x$sigma.lv,x$digits),"\n\n")}else{cat("\n")}
-  if(!is.null(x$LvVarcoef)){cat("Log-linear coefficients for the residual standard deviation of LVs:\n");print(zapsmall(x$LvVarcoef,x$digits));cat("\n")}
   
   if(!grepl('glmmVA',deparse1(x$Call))){
   cat("Formula: ", paste(x$formula, collapse = ""), "\n")
@@ -499,6 +506,13 @@ print.summary.gllvm <- function (x, ...)
   if(!is.null(x$Coef.tableLV)){
     cat("\nCoefficients LV predictors:\n")
     coefs <- x$Coef.tableLV
+    
+    printCoefmat(coefs, digits = x$digits, signif.stars = x$signif.stars, 
+                 na.print = "")
+  }
+  if(!is.null(x$Coef.tableLvVar)){
+    cat("\nCoefficients LV variance predictors (not rotated):\n")
+    coefs <- x$Coef.tableLvVar
     
     printCoefmat(coefs, digits = x$digits, signif.stars = x$signif.stars, 
                  na.print = "")
