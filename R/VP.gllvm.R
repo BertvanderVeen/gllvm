@@ -187,11 +187,8 @@ VP.gllvm <- function(object, group = NULL, groupnames=NULL, adj.cov = TRUE, grou
       if(object$num.lv>0)groupnamesF <- c(groupnamesF, paste0("LV", 1:object$num.lv))
       
       # lvs/unconstr. part
-      if(is.matrix(object$params$sigma.lv)){
-        S <- t(object$params$sigma.lv[, as.integer(object$lv.var.group), drop = FALSE])
-      }else{
-        S <- matrix(object$params$sigma.lv, nrow(object$lvs), ncol(object$lvs), byrow = TRUE)
-      }
+      S <- matrix(object$params$sigma.lv, nrow(object$lvs), ncol(object$lvs), byrow = TRUE)
+      if (!is.null(object$params$LvVarcoef)) S[, 1:object$num.lv.c] <- S[, 1:object$num.lv.c, drop = FALSE] * exp(object$lv.var.design %*% object$params$LvVarcoef)
       if (object$num.RR == 0) {
         lvs <- object$lvs * S
         Z <- cbind(Z, lvs)
