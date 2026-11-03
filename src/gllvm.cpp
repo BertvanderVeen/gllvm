@@ -482,12 +482,8 @@ Type objective_function<Type>::operator() ()
           Delta.row(d).setZero();
         }
       }
-      
-      for (int i=0; i<n; i++) {
-        A(i) = Delta*A(i);
-      }
-      
-      
+
+
     } else if(num_corlv > 0) {
       u *= Delta;
       if((num_RR*random(2))>0 && (quadratic)>0){
