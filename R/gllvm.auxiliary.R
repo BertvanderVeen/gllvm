@@ -2084,10 +2084,8 @@ sdrandom<-function(obj, Vtheta, incl, ignore.u = FALSE,return.covb = FALSE, type
   sigma.site <- NULL
   if((num.lv+num.lv.c)>0){
     sigma.lv <- abs(obj$par[names(obj$par)=="sigmaLV"])  
-    if(length(obj$env$data$lvvar)==n && num.lv.c>0){
-      sigma.site <- matrix(sigma.lv[1:num.lv.c], n, num.lv.c, byrow = TRUE)
-      for(g in which(obj$env$data$lvvar>0)) sigma.site[g,] <- sigma.lv[(num.lv+num.lv.c)+(obj$env$data$lvvar[g]-1)*num.lv.c+1:num.lv.c]
-      sigma.lv <- sigma.lv[1:(num.lv+num.lv.c)]
+    if(any(names(obj$par)=="sigmaLVx")){
+      sigma.site <- t(t(exp(obj$env$data$x_lvvar%*%matrix(obj$par[names(obj$par)=="sigmaLVx"], ncol(obj$env$data$x_lvvar), num.lv.c)))*sigma.lv[1:num.lv.c])
     }
   }
   
@@ -2547,11 +2545,9 @@ CMSEPf <- function(fit, return.covb = FALSE, type = NULL){
   }
   
   sigma.lv <- fit$params$sigma.lv
-  if(is.matrix(sigma.lv)){
-    sigma.c <- c(t(sigma.lv[1:num.lv.c, as.integer(fit$lv.var.group), drop=FALSE]))
-    sigma.lv <- sigma.lv[,1]
-  }else if(num.lv.c>0){
+  if(num.lv.c>0){
     sigma.c <- rep(sigma.lv[1:num.lv.c],each=n_nlvc)
+    if(!is.null(fit$params$LvVarcoef)) sigma.c <- c(t(t(exp(fit$lv.var.design%*%fit$params$LvVarcoef))*sigma.lv[1:num.lv.c]))
   }
   
   #we never scale the prediction regions for num.lv by sigma.lv.

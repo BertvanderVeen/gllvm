@@ -848,12 +848,10 @@ se.gllvm <- function(object, ...){
     }
     
     if((num.lv+num.lv.c)>0){
-      if(is.matrix(object$params$sigma.lv)){
-        out$sd$sigma.lv <- matrix(se.sigma.lv[1:(num.lv+num.lv.c)], num.lv+num.lv.c, ncol(object$params$sigma.lv), dimnames = dimnames(object$params$sigma.lv))
-        out$sd$sigma.lv[1:num.lv.c, -1] <- se.sigma.lv[-(1:(num.lv+num.lv.c))]
-      }else{
       out$sd$sigma.lv  <- se.sigma.lv
       names(out$sd$sigma.lv) <- colnames(object$params$theta[,1:(num.lv+num.lv.c)])
+      if(!is.null(object$params$LvVarcoef)){
+        out$sd$LvVarcoef <- matrix(se$sigmaLVx, nrow(object$params$LvVarcoef), num.lv.c, dimnames = dimnames(object$params$LvVarcoef))
       }
     }
     

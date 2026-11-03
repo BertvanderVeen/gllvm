@@ -81,7 +81,7 @@ gllvm(
 
 \item{lvCor}{correlation structure for latent variables, defaults to \code{NULL} Correlation structure for latent variables can be defined via formula, eg. \code{~struc(1|groups)}, where option to 'struc' are \code{corAR1} (AR(1) covariance), \code{corExp} (exponentially decaying, see argument '\code{dist}'), \code{corCS} (compound symmetry), and \code{corMatern} (Matern covariance, see argument '\code{dist}'). The grouping variable needs to be included either in \code{studyDesign}. Not yet available in combination with \code{num.RR} or \code{TR}.}
 
-\item{lv.var}{formula with a single categorical variable from \code{X}, e.g. \code{~group}, giving group-specific residual standard deviations for the latent variables in concurrent ordination (\code{num.lv.c}). Defaults to \code{NULL}, a single residual standard deviation per latent variable. Not available in combination with \code{lvCor} or \code{TR}.}
+\item{lv.var}{formula with covariates from \code{X}, e.g. \code{~group} or \code{~x}, for a log-linear model of the residual standard deviations of the latent variables in concurrent ordination (\code{num.lv.c}): the residual standard deviation of latent variable \eqn{k} at site \eqn{i} is \eqn{\sigma_k \exp(w_i^\top \delta_k)}, with \eqn{w_i} the row of the design matrix without intercept. Categorical variables give group-specific residual standard deviations. Defaults to \code{NULL}, a single residual standard deviation per latent variable. Not available in combination with \code{lvCor} or \code{TR}.}
 
 \item{studyDesign}{variables related to eg. sampling/study design, used for defining correlation structure of the latent variables and row effects.}
 
@@ -217,6 +217,7 @@ An object of class "gllvm" includes the following components:
    \item{theta }{ latent variables' loadings relative to the diagonal entries of loading matrix}
    \item{sigma.lv }{ diagonal entries of latent variables' loading matrix}
    \item{LvXcoef }{ Predictor coefficients (or predictions for random slopes) related to latent variables, i.e. canonical coefficients}
+   \item{LvVarcoef }{ coefficients of the log-linear model for the residual standard deviations of the latent variables in concurrent ordination, if \code{lv.var} is given}
    \item{beta0 }{ column specific intercepts}
    \item{Xcoef }{ coefficients related to environmental covariates X}
    \item{B }{ coefficients in fourth corner model, and RE means}

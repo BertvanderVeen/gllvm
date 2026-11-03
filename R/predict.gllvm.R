@@ -266,15 +266,15 @@ predict.gllvm <- function(object, newX = NULL, newTR = NULL, newLV = NULL, type 
             stop("Number of rows in newLV must equal to the number of rows in newX, if newX is included, otherwise same as number of rows in the response matrix.")
         }
         
-        lvgroup <- object$lv.var.group
-        if (!is.null(newdata) && !is.null(object$lv.var)) {
-          lvgroup <- factor(as.data.frame(newdata)[[all.vars(object$lv.var)]], levels = levels(object$lv.var.group))
-          if (anyNA(lvgroup)) stop("The variable in 'lv.var' is missing from 'newX', or has levels not present in the fitted model.")
-        }
-        if(is.matrix(object$params$sigma.lv)){
-          S <- t(object$params$sigma.lv[, as.integer(lvgroup), drop = FALSE])
-        }else{
-          S <- matrix(object$params$sigma.lv, nrow(newLV), ncol(newLV), byrow = TRUE)
+        S <- matrix(object$params$sigma.lv, nrow(newLV), ncol(newLV), byrow = TRUE)
+        if (!is.null(object$params$LvVarcoef)) {
+          lv.var.design <- object$lv.var.design
+          if (!is.null(newdata)) {
+            lv.var.design <- model.matrix(object$lv.var, as.data.frame(newdata))
+            if (!all(colnames(object$lv.var.design) %in% colnames(lv.var.design))) stop("The variables in 'lv.var' are missing from 'newX', or have levels not present in the fitted model.")
+            lv.var.design <- lv.var.design[, colnames(object$lv.var.design), drop = FALSE]
+          }
+          S[, 1:object$num.lv.c] <- S[, 1:object$num.lv.c, drop = FALSE] * exp(lv.var.design %*% object$params$LvVarcoef)
         }
         if (object$num.RR == 0) {
           lvs <- newLV * S
@@ -295,11 +295,8 @@ predict.gllvm <- function(object, newX = NULL, newTR = NULL, newLV = NULL, type 
         }
         
       } else {
-        if(is.matrix(object$params$sigma.lv)){
-          S <- t(object$params$sigma.lv[, as.integer(object$lv.var.group), drop = FALSE])
-        }else{
-          S <- matrix(object$params$sigma.lv, nrow(object$lvs), ncol(object$lvs), byrow = TRUE)
-        }
+        S <- matrix(object$params$sigma.lv, nrow(object$lvs), ncol(object$lvs), byrow = TRUE)
+        if (!is.null(object$params$LvVarcoef)) S[, 1:object$num.lv.c] <- S[, 1:object$num.lv.c, drop = FALSE] * exp(object$lv.var.design %*% object$params$LvVarcoef)
         if (object$num.RR == 0) {
           lvs <- object$lvs * S
         } else {
@@ -799,13 +796,9 @@ perturb.gllvm <- function(object, params, r, type = "response", skeleton = NULL,
     }
 
     if((num.lv + num.lv.c) > 0){
-      if(is.matrix(object$params$sigma.lv)){
-        newobject$params$sigma.lv[] <- abs(newpars$sigmaLV)[1:(num.lv+num.lv.c)]
-        newobject$params$sigma.lv[1:num.lv.c, -1] <- abs(newpars$sigmaLV)[-(1:(num.lv+num.lv.c))]
-      }else{
-        newobject$params$sigma.lv <- abs(newpars$sigmaLV)
-        names(newobject$params$sigma.lv) <- names(object$params$sigma.lv)
-      }
+      newobject$params$sigma.lv <- abs(newpars$sigmaLV)
+      names(newobject$params$sigma.lv) <- names(object$params$sigma.lv)
+      if(!is.null(object$params$LvVarcoef)) newobject$params$LvVarcoef[] <- newpars$sigmaLVx
     }
     
     if((num.lv + num.lv.c + num.RR) > 0){

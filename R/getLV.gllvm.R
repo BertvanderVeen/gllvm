@@ -66,11 +66,8 @@ getLV.gllvm <- function(object, type = NULL, ...)
       object$lvs = as.matrix(object$TMBfn$env$data$dLV%*%object$lvs)
     }
       lvs <- object$lvs
-      if(is.matrix(object$params$sigma.lv)){
-        lvs[,1:object$num.lv.c] <- lvs[,1:object$num.lv.c,drop=F]*t(object$params$sigma.lv[1:object$num.lv.c, as.integer(object$lv.var.group), drop=F])
-      }else{
       lvs[,1:object$num.lv.c] <- t(t(lvs[,1:object$num.lv.c,drop=F])*object$params$sigma.lv[1:object$num.lv.c])
-      }
+      if(!is.null(object$params$LvVarcoef))lvs[,1:object$num.lv.c] <- lvs[,1:object$num.lv.c,drop=F]*exp(object$lv.var.design%*%object$params$LvVarcoef)
       lvs[,1:object$num.lv.c] <- lvs[,1:object$num.lv.c]+object$lv.X.design%*%object$params$LvXcoef[,1:object$num.lv.c,drop=F]
       if(object$num.RR>0){
         lvs <- cbind(lvs[,1:object$num.lv.c,drop=F],object$lv.X.design%*%object$params$LvXcoef[,-c(1:object$num.lv.c),drop=F], lvs[,-c(1:object$num.lv.c),drop=F])

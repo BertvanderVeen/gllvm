@@ -80,7 +80,7 @@ confint.gllvm <- function(object, parm=NULL, level = 0.95, ...) {
       object$sd$corrpar <- NULL
     }
     
-    parm_all <- c("sigma.lv","theta", "LvXcoef","beta0", "Xcoef", "B", "row.params.fixed", "sigma", "sigmaB", "sigmaLvXcoef", "inv.phi", "phi", "ZINB.phi", "ZINB.inv.phi" ,"p","zeta", "rho.sp", "rho.lv")
+    parm_all <- c("sigma.lv","theta", "LvXcoef","LvVarcoef","beta0", "Xcoef", "B", "row.params.fixed", "sigma", "sigmaB", "sigmaLvXcoef", "inv.phi", "phi", "ZINB.phi", "ZINB.inv.phi" ,"p","zeta", "rho.sp", "rho.lv")
     if(object$randomB!=FALSE){
       object$params$LvXcoef <- NULL
     }
@@ -161,10 +161,13 @@ confint.gllvm <- function(object, parm=NULL, level = 0.95, ...) {
       cal <- cal + num.lv #for sigma.lv
     }
     
-    if(is.matrix(object$params$sigma.lv)) cal <- cal + length(object$params$sigma.lv) - (num.lv+num.lv.c)
     if((num.lv.c+num.RR)>0&object$randomB==FALSE){
       rnames[-c(1:cal)][1:(ncol(object$lv.X.design)*(num.lv.c+num.RR))] <- paste(colnames(object$lv.X.design),"LV",rep(1:(num.lv.c+num.RR),each=ncol(object$lv.X.design)),sep=".")
       cal<-cal + ncol(object$lv.X.design)*(num.lv.c+num.RR)
+    }
+    if(!is.null(object$params$LvVarcoef)){
+      rnames[(cal + 1):(cal + length(object$params$LvVarcoef))] <- paste("sigma", rep(colnames(object$params$LvVarcoef), each = nrow(object$params$LvVarcoef)), rownames(object$params$LvVarcoef), sep = ".")
+      cal <- cal + length(object$params$LvVarcoef)
     }
     
     if(!object$beta0com){
@@ -319,10 +322,11 @@ confint.gllvm <- function(object, parm=NULL, level = 0.95, ...) {
       }
       
     }
+    if("LvVarcoef"%in%parm&!is.null(object$params$LvVarcoef)){
+      names(cilow)[gsub("LvVarcoef.*","LvVarcoef",names(unlist(object$sd[parm])))%in%"LvVarcoef"] <- paste("sigma", rep(colnames(object$params$LvVarcoef), each = nrow(object$params$LvVarcoef)), rownames(object$params$LvVarcoef), sep = ".")
+    }
     if("sigma.lv"%in%parm){
-      if(is.matrix(object$params$sigma.lv)){
-        names(cilow)[gsub("sigma.lv.*","sigma.lv",names(unlist(object$sd[parm])))%in%"sigma.lv"]<-  paste("sigma", rep(rownames(object$params$sigma.lv), ncol(object$params$sigma.lv)), rep(colnames(object$params$sigma.lv), each=nrow(object$params$sigma.lv)), sep=".")
-      }else if(num.lv>0&num.lv.c>0){
+      if(num.lv>0&num.lv.c>0){
         names(cilow)[gsub("sigma.lv.*","sigma.lv",names(unlist(object$sd[parm])))%in%"sigma.lv"]<-  c(paste("sigma.CLV", 1:num.lv.c, sep=""),paste("sigma.LV", 1:num.lv, sep=""))
       }else if(num.lv>0){
         names(cilow)[gsub("sigma.lv.*","sigma.lv",names(unlist(object$sd[parm])))%in%"sigma.lv"]<-  c(paste("sigma.LV", 1:num.lv, sep=""))

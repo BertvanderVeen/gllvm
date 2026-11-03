@@ -13,7 +13,7 @@
 #' @param num.RR number of latent variables, d, in gllvm model to constrain, without residual term (reduced rank regression). Cannot yet be combined with traits.
 #' @param lv.formula an object of class "formula" (or one that can be coerced to that class): defines the effects that inform the ordination axes in concurrent (\code{num.lv.c}) and/or constrained (\code{num.RR}) ordination. Accepts fixed effects or random effects, not both at the same time. Random effects formulation requires specifying the \code{randomB} argument.
 #' @param lvCor correlation structure for latent variables, defaults to \code{NULL} Correlation structure for latent variables can be defined via formula, eg. \code{~struc(1|groups)}, where option to 'struc' are \code{corAR1} (AR(1) covariance), \code{corExp} (exponentially decaying, see argument '\code{dist}'), \code{corCS} (compound symmetry), and \code{corMatern} (Matern covariance, see argument '\code{dist}'). The grouping variable needs to be included either in \code{studyDesign}. Not yet available in combination with \code{num.RR} or \code{TR}.
-#' @param lv.var formula with a single categorical variable from \code{X}, e.g. \code{~group}, giving group-specific residual standard deviations for the latent variables in concurrent ordination (\code{num.lv.c}). Defaults to \code{NULL}, a single residual standard deviation per latent variable. Not available in combination with \code{lvCor} or \code{TR}.
+#' @param lv.var formula with covariates from \code{X}, e.g. \code{~group} or \code{~x}, for a log-linear model of the residual standard deviations of the latent variables in concurrent ordination (\code{num.lv.c}): the residual standard deviation of latent variable \eqn{k} at site \eqn{i} is \eqn{\sigma_k \exp(w_i^\top \delta_k)}, with \eqn{w_i} the row of the design matrix without intercept. Categorical variables give group-specific residual standard deviations. Defaults to \code{NULL}, a single residual standard deviation per latent variable. Not available in combination with \code{lvCor} or \code{TR}.
 #' @param studyDesign variables related to eg. sampling/study design, used for defining correlation structure of the latent variables and row effects.
 #' @param method  model can be fitted using Laplace approximation method (\code{method = "LA"}) or variational approximation method (\code{method = "VA"}), or with extended variational approximation method (\code{method = "EVA"}) when VA is not applicable. If particular model has not been implemented using the selected method, model is fitted using the alternative method as a default. Defaults to \code{"VA"}.
 #' @param row.eff  \code{FALSE}, \code{fixed}, \code{"random"} or an object of class "formula": defines the community-level or row effects, i.e. terms that (unlike \code{formula}) are the same for all species (columns) rather than species-specific. Defaults to \code{FALSE} when row effects are not included. \code{"fixed"} and \code{"random"} give, respectively, a single fixed or i.i.d. random intercept per row. Supports both fixed effects and random effects, e.g. \code{~ x1 + (1|group)}. The variable(s) must be included in \code{studyDesign}. Correlation structure between random group effects/intercepts can also be set using \code{~struc(1|groups)}, where option to 'struc' are \code{corAR1} (AR(1) covariance), \code{corExp} (exponentially decaying, see argument '\code{dist}'), \code{corCS} (compound symmetry), and \code{corMatern} (Matern covariance, see argument '\code{dist}'), or \code{propto} (proportional covariance, used as propto(a+b|group, matrix)). Correlation structure can be set between or within groups, see argument '\code{corWithin}'.
@@ -226,6 +226,7 @@
 #'    \item{theta }{ latent variables' loadings relative to the diagonal entries of loading matrix}
 #'    \item{sigma.lv }{ diagonal entries of latent variables' loading matrix}
 #'    \item{LvXcoef }{ Predictor coefficients (or predictions for random slopes) related to latent variables, i.e. canonical coefficients}
+#'    \item{LvVarcoef }{ coefficients of the log-linear model for the residual standard deviations of the latent variables in concurrent ordination, if \code{lv.var} is given}
 #'    \item{beta0 }{ column specific intercepts}
 #'    \item{Xcoef }{ coefficients related to environmental covariates X}
 #'    \item{B }{ coefficients in fourth corner model, and RE means}
@@ -470,19 +471,18 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
   if(!randomB%in%c(FALSE,"single","P","LV","iid")){
     stop("RandomB should be one of FALSE, 'single', 'P', 'LV', or 'iid'.")
   }
-  lvvar <- NULL
+  lv.var.design <- NULL
   if(!is.null(lv.var)){
-    if(!inherits(lv.var, "formula"))stop("'lv.var' must be a formula, e.g. ~group.")
+    if(!inherits(lv.var, "formula"))stop("'lv.var' must be a formula, e.g. ~group or ~x.")
     if(num.lv.c==0)stop("'lv.var' requires num.lv.c > 0.")
     if(!is.null(lvCor))stop("'lv.var' cannot be combined with 'lvCor'.")
     if(!is.null(TR))stop("'lv.var' cannot be combined with 'TR'.")
-    if(is.null(X))stop("'lv.var' requires the grouping variable to be in 'X'.")
-    if(length(all.vars(lv.var))!=1)stop("'lv.var' must contain a single categorical variable.")
-    if(!all.vars(lv.var)%in%colnames(X))stop("The variable in 'lv.var' must be a column of 'X'.")
-    lvvar <- data.frame(X, check.names = FALSE)[[all.vars(lv.var)]]
-    if(is.numeric(lvvar))stop("The variable in 'lv.var' must be a factor or character vector.")
-    lvvar <- factor(lvvar)
-    if(nlevels(lvvar)<2)stop("The variable in 'lv.var' must have at least two levels.")
+    if(is.null(X))stop("'lv.var' requires its variables to be in 'X'.")
+    if(!all(all.vars(lv.var)%in%colnames(X)))stop("All variables in 'lv.var' must be columns of 'X'.")
+    lv.var.design <- model.matrix(lv.var, data.frame(X, check.names = FALSE))
+    lv.var.design <- lv.var.design[,!apply(lv.var.design, 2, function(x) all(x == 1)),drop=FALSE]
+    if(ncol(lv.var.design)==0)stop("'lv.var' must contain at least one variable.")
+    if(nrow(lv.var.design)!=nrow(y))stop("Variables in 'lv.var' cannot contain missing values.")
   }
   if(is.matrix(dist)){
     dist <- list(dist) # ensure backward compatibility
@@ -1599,7 +1599,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
     n.i <- 1
 
 
-    out <- list( y = y, X = X, lv.X = lv.X, lv.X.design = lv.X.design, TR = TR, data = datayx, num.lv = num.lv, num.lv.c = num.lv.c, num.RR = num.RR, num.lvcor =num.lv.cor, lv.formula = lv.formula, lvCor = lvCor, lv.var = lv.var, lv.var.group = lvvar, formula = formula,
+    out <- list( y = y, X = X, lv.X = lv.X, lv.X.design = lv.X.design, TR = TR, data = datayx, num.lv = num.lv, num.lv.c = num.lv.c, num.RR = num.RR, num.lvcor =num.lv.cor, lv.formula = lv.formula, lvCor = lvCor, lv.var = lv.var, lv.var.design = lv.var.design, formula = formula,
         method = method, family = family, row.eff = row.eff.formula, col.eff = list(col.eff = col.eff, col.eff.formula = col.eff.formula, spdr = Matrix::t(RElistSP$Zt), Ab.struct = Ab.struct, Ab.struct.rank = Ab.struct.rank, colMat.rho.struct = colMat.rho.struct), corP=list(cstruc = cstruc, cstruclv = cstruclv, corWithin = corWithin, corWithinLV = corWithinLV, Astruc=0), dist=dist, distLV = distLV, randomX = randomX, n.init = n.init,
         sd = FALSE, Lambda.struc = Lambda.struc, TMB = TMB, beta0com = beta0com, optim.method=optim.method, disp.group = disp.group, NN=NN, Ntrials = Ntrials, quadratic = quadratic, randomB = randomB, zeta.struc = zeta.struc)
     if(any(out$corP$cstruc=="corMatern")) out$corP$MaternSmoothness = MaternKappa
@@ -1806,7 +1806,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
             quadratic = quadratic,
             randomB = randomB,
             optim.method=optim.method, 
-            dr=dr, dLV=dLV, lvvar = lvvar, cstruc = cstruc, cstruclv = cstruclv, dist =dist, distLV = distLV, corWithinLV = corWithinLV, NN=NN, bound = bound, pg.K = pg.K, 
+            dr=dr, dLV=dLV, lvvar = lv.var.design, cstruc = cstruc, cstruclv = cstruclv, dist =dist, distLV = distLV, corWithinLV = corWithinLV, NN=NN, bound = bound, pg.K = pg.K, 
             scalmax = scalmax, MaternKappa = MaternKappa, rangeP = rangeP,
             setMap=setMap, #Dthreshold=Dthreshold,
             disp.group = disp.group,
