@@ -256,7 +256,7 @@ We see an arch effect; the axes are folding due to non-linearity in species resp
 
 ```{r testvar-quad-fit, eval=FALSE}
 hetQCGLLVM <- gllvm(microbialdata$Y, X, lv.formula = ~pH + SOM + Phosp+Region, num.lv.c = 2,
-            family = "negative.binomial", lv.var = ~Region, sd.errors=FALSE, optim.method = "L-BFGS-B", quadratic = TRUE)
+            family = "negative.binomial", lv.var = ~Region, sd.errors=FALSE, optim.method = "L-BFGS-B", quadratic = TRUE, seed = 1)
 ```
 
 ```{r testvar-quad}
