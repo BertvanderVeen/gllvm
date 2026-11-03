@@ -77,7 +77,7 @@
 
 \item{arrow.lty}{linetype for arrows in constrained ordination}
 
-\item{fac.center}{logical. If \code{TRUE} place labels for binary variables at their estimated location.}
+\item{fac.center}{logical. If \code{TRUE} place labels for the levels of categorical variables at their estimated location, including the reference level implied by the contrasts.}
 
 \item{spp.arrows}{plot species scores as arrows if outside of the range of the plot? Defaults to \code{FALSE} for linear response models and \code{TRUE} for quadratic response models.}
 
