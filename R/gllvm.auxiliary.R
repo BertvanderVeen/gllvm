@@ -2547,7 +2547,10 @@ CMSEPf <- function(fit, return.covb = FALSE, type = NULL){
   sigma.lv <- fit$params$sigma.lv
   if(num.lv.c>0){
     sigma.c <- rep(sigma.lv[1:num.lv.c],each=n_nlvc)
-    if(!is.null(fit$params$LvVarcoef)) sigma.c <- c(t(t(exp(fit$lv.var.design%*%fit$params$LvVarcoef))*sigma.lv[1:num.lv.c]))
+    if(!is.null(fit$params$LvVarcoef)){
+      if(n_nlvc!=n) stop("Prediction errors of residual latent variables at the level of 'lvCor' units are not available with 'lv.var', as the residual standard deviations are site-specific.")
+      sigma.c <- c(t(t(exp(fit$lv.var.design%*%fit$params$LvVarcoef))*sigma.lv[1:num.lv.c]))
+    }
   }
   
   #we never scale the prediction regions for num.lv by sigma.lv.

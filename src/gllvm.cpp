@@ -486,6 +486,13 @@ Type objective_function<Type>::operator() ()
 
     } else if(num_corlv > 0) {
       u *= Delta;
+      if((x_lvvar.rows()==n) && (num_lv_c>0)){
+        for (int i=0; i<n; i++){
+          for (int d=0; d<num_lv_c; d++){
+            u(i,d) *= exp((x_lvvar.row(i)*sigmaLVx.col(d)).sum());
+          }
+        }
+      }
       if((num_RR*random(2))>0 && (quadratic)>0){
         Delta.conservativeResize(nlvr+num_RR,nlvr+num_RR);
         for(int d=nlvr; d<(nlvr+num_RR); d++){
@@ -2562,6 +2569,16 @@ Type objective_function<Type>::operator() ()
       } else if(num_corlv>0) { //CorLV // Correlated LVs
         int i,j,d;
         int arank = 2;
+        bool haslvvar = (x_lvvar.rows()==n) && (num_lv_c>0);
+        matrix<Type> lvvarF(n,num_corlv);
+        lvvarF.fill(1.0);
+        if(haslvvar){
+          for (i=0; i<n; i++){
+            for (int q=0; q<num_lv_c; q++){
+              lvvarF(i,q) = exp((x_lvvar.row(i)*sigmaLVx.col(q)).sum());
+            }
+          }
+        }
         matrix<Type> AQ(num_corlv,num_corlv);
         AQ.setZero(); AQ.diagonal().fill(1.0);
         
@@ -2600,10 +2617,24 @@ Type objective_function<Type>::operator() ()
               
               AAT = Alvm*Alvm.transpose();
               DAATD = Delta * AAT * Delta.transpose();
-              for (j=0; j<p;j++){
-                cQ.col(j) += 0.5*dLV.col(d)*((newlam.col(j).transpose()*DAATD)*newlam.col(j));
+              if(haslvvar){
+                matrix<Type> Fi(num_corlv,num_corlv);
+                matrix<Type> DAATDi;
+                for (typename Eigen::SparseMatrix<Type>::InnerIterator it(dLV,d); it; ++it){
+                  Fi.setZero();
+                  Fi.diagonal() = lvvarF.row(it.row()).transpose();
+                  DAATDi = Fi * DAATD * Fi;
+                  for (j=0; j<p;j++){
+                    cQ(it.row(),j) += 0.5*it.value()*((newlam.col(j).transpose()*DAATDi)*newlam.col(j)).value();
+                  }
+                  if(quadratic>0) AAt(it.row()) = DAATDi;
+                }
+              } else {
+                for (j=0; j<p;j++){
+                  cQ.col(j) += 0.5*dLV.col(d)*((newlam.col(j).transpose()*DAATD)*newlam.col(j));
+                }
+                if(quadratic>0) for (typename Eigen::SparseMatrix<Type>::InnerIterator it(dLV,d); it; ++it) AAt(it.row()) = DAATD;
               }
-              if(quadratic>0) for (typename Eigen::SparseMatrix<Type>::InnerIterator it(dLV,d); it; ++it) AAt(it.row()) = DAATD;
             }
             nll -= 0.5*(nu*num_corlv);
             
@@ -2649,6 +2680,7 @@ Type objective_function<Type>::operator() ()
                   nll -= -0.5 * trSinvA;
 
                   matrix<Type> dLVA = dLV*AtempSq.matrix();
+                  if(haslvvar) for (i=0; i<n; i++) dLVA(i,0) *= lvvarF(i,q)*lvvarF(i,q);
                   // 0.5*lambda_qj*A_qii*lambda_qj
                   for (j=0; j<p;j++){
                     Type sca = 0.5*pow(newlam(q,j),2)*pow(Delta(q,q),2);
@@ -2685,6 +2717,7 @@ Type objective_function<Type>::operator() ()
                   // 0.5*lambda_qj*A_qii*lambda_qj
                   AAT = Atemp*Atemp.transpose();
                   matrix<Type> dLVA = dLV*AAT.diagonal().matrix();
+                  if(haslvvar) for (i=0; i<n; i++) dLVA(i,0) *= lvvarF(i,q)*lvvarF(i,q);
                   for (j=0; j<p;j++){
                     Type sca = 0.5*pow(newlam(q,j),2)*pow(Delta(q,q),2);
                     cQ.col(j) += sca*dLVA; //this works
@@ -2775,12 +2808,26 @@ Type objective_function<Type>::operator() ()
               }
 
               matrix<Type> AQt = Delta * AQ * Delta.transpose();
-              if(quadratic>0) for (i=0; i<n; i++) AAt(i) = dLVA(i,0)*AQt;
-              // 0.5*lambda_qj*A_qii*lambda_qj
-              for (j=0; j<p;j++){
-                Type sca = 0.5 * (newlam.col(j).transpose() * AQt * newlam.col(j)).sum();
-                cQ.col(j) += sca * dLVA;
-                // cQ.col(j) += 0.5*(dLV*Alvm.diagonal())*((newlam.col(j).transpose()*(Delta*AQ*Delta.transpose()))*newlam.col(j));
+              if(haslvvar){
+                matrix<Type> Fi(num_corlv,num_corlv);
+                matrix<Type> AQti;
+                for (i=0; i<n; i++){
+                  Fi.setZero();
+                  Fi.diagonal() = lvvarF.row(i).transpose();
+                  AQti = Fi * AQt * Fi;
+                  if(quadratic>0) AAt(i) = dLVA(i,0)*AQti;
+                  for (j=0; j<p;j++){
+                    cQ(i,j) += 0.5 * dLVA(i,0) * (newlam.col(j).transpose() * AQti * newlam.col(j)).sum();
+                  }
+                }
+              } else {
+                if(quadratic>0) for (i=0; i<n; i++) AAt(i) = dLVA(i,0)*AQt;
+                // 0.5*lambda_qj*A_qii*lambda_qj
+                for (j=0; j<p;j++){
+                  Type sca = 0.5 * (newlam.col(j).transpose() * AQt * newlam.col(j)).sum();
+                  cQ.col(j) += sca * dLVA;
+                  // cQ.col(j) += 0.5*(dLV*Alvm.diagonal())*((newlam.col(j).transpose()*(Delta*AQ*Delta.transpose()))*newlam.col(j));
+                }
               }
 
               REPORT(Alvm);
@@ -2854,6 +2901,7 @@ Type objective_function<Type>::operator() ()
                 // Compute Alvm*Alvm'
                 AlvAlvT = Alvm(i) * Alvm(i).transpose();
                 matrix<Type> dLVAi = dLV.block(0,it_ind, dLV.rows(), times(0,i))*AlvAlvT.diagonal();
+                if(haslvvar) for (int r=0; r<n; r++) dLVAi(r,0) *= lvvarF(r,q)*lvvarF(r,q);
                 dLVA += dLVAi;
                 
                 // Update cQ with 0.5*gamma'A gamma
@@ -2951,8 +2999,10 @@ Type objective_function<Type>::operator() ()
               matrix<Type> dLVAi = dLV.block(0,it_ind, dLV.rows(), times(0,i))*AlvAlvT.diagonal();
               dLVA += dLVAi;
               
-              for (j=0; j<p;j++){
-                cQ.col(j) += sca(j)*dLVAi;
+              if(!haslvvar){
+                for (j=0; j<p;j++){
+                  cQ.col(j) += sca(j)*dLVAi;
+                }
               }
               
               nll -= num_corlv*Alvm(i).diagonal().array().log().sum() + times(0,i)*AQ.diagonal().array().log().sum(); //log(Alvm(i).determinant());
@@ -2989,7 +3039,21 @@ Type objective_function<Type>::operator() ()
               }
               it_ind += times(0,i); 
             }
-            if(quadratic>0) for (int r=0; r<n; r++) AAt(r) = dLVA(r,0)*DAQD;
+            if(haslvvar){
+              matrix<Type> Fr(num_corlv,num_corlv);
+              matrix<Type> DAQDr;
+              for (int r=0; r<n; r++){
+                Fr.setZero();
+                Fr.diagonal() = lvvarF.row(r).transpose();
+                DAQDr = Fr * DAQD * Fr;
+                for (j=0; j<p;j++){
+                  cQ(r,j) += 0.5 * dLVA(r,0) * (newlam.col(j).transpose() * DAQDr * newlam.col(j)).sum();
+                }
+                if(quadratic>0) AAt(r) = dLVA(r,0)*DAQDr;
+              }
+            } else {
+              if(quadratic>0) for (int r=0; r<n; r++) AAt(r) = dLVA(r,0)*DAQD;
+            }
             REPORT(Alvm);
           }
           
