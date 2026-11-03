@@ -223,7 +223,7 @@ summary(RRGLMb2)
 ## 
 ## Family:  poisson 
 ## 
-## AIC:  2400.204 AICc:  2422.204 BIC:  2610.145 LL:  -1145.1 df:  55 
+## AIC:  2400.187 AICc:  2422.187 BIC:  2610.128 LL:  -1145.1 df:  55 
 ## 
 ## Informed LVs:  0 
 ## Constrained LVs:  2 
@@ -235,19 +235,19 @@ summary(RRGLMb2)
 ## 
 ## Random effects LV predictors:
 ##  Name          Std.Dev.CLV1 Variance.CLV1 Std.Dev.CLV2 Variance.CLV2 Corr   
-##  soil.dry      1.8806       3.5368        0.6412       0.4111               
-##  bare.sand     0.1966       0.0387        0.0670       0.0045        -0.7325
-##  fallen.leaves 0.7789       0.6067        0.2656       0.0705        -0.5170
-##  moss          0.5956       0.3548        0.2031       0.0412        -0.3809
-##  herb.layer    1.6474       2.7140        0.5617       0.3155         0.0943
-##  reflection    0.5554       0.3085        0.1894       0.0359         0.9761
+##  soil.dry      1.2347       1.5246        0.6379       0.4069               
+##  bare.sand     0.1318       0.0174        0.0681       0.0046        -0.5511
+##  fallen.leaves 0.5531       0.3060        0.2858       0.0817        -0.2939
+##  moss          0.5997       0.3596        0.3098       0.0960        -0.3601
+##  herb.layer    1.1317       1.2807        0.5846       0.3418         0.1096
+##  reflection    0.5590       0.3125        0.2888       0.0834         0.9484
 ##                                  
 ##                                  
 ##                                  
-##   0.9547                         
-##   0.1957  0.2121                 
-##   0.6049  0.7816 -0.2098         
-##  -0.5680 -0.3231 -0.4075  0.3064
+##   0.9537                         
+##   0.0535  0.0469                 
+##   0.7652  0.9005 -0.2602         
+##  -0.2589  0.0192 -0.4121  0.4174
 ```
 
 
@@ -438,7 +438,7 @@ We see an arch effect; the axes are folding due to non-linearity in species resp
 
 ``` r
 hetQCGLLVM <- gllvm(microbialdata$Y, X, lv.formula = ~pH + SOM + Phosp+Region, num.lv.c = 2,
-            family = "negative.binomial", lv.var = ~Region, sd.errors=FALSE, optim.method = "L-BFGS-B", quadratic = TRUE)
+            family = "negative.binomial", lv.var = ~Region, sd.errors=FALSE, optim.method = "L-BFGS-B", quadratic = TRUE, seed = 1)
 ```
 
 
