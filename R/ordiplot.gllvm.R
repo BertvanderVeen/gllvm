@@ -22,7 +22,7 @@
 #' @param arrow.spp.scale positive value, to scale arrows of species
 #' @param arrow.ci represent statistical uncertainty for arrows in constrained or concurrent ordination using confidence or prediction interval? Defaults to \code{TRUE}
 #' @param arrow.lty linetype for arrows in constrained ordination
-#' @param fac.center logical. If \code{TRUE} place labels for binary variables at their estimated location.
+#' @param fac.center logical. If \code{TRUE} place labels for the levels of categorical variables at their estimated location, including the reference level implied by the contrasts.
 #' @param predict.region if \code{TRUE} or \code{"sites"} prediction regions for the predicted latent variables are plotted, defaults to \code{FALSE}. EXTENSION UNDER DEVELOPMENT: if \code{"species"} uncertainty estimate regions for the estimated latent variable loadings are plotted. Works only if \code{biplot = TRUE}.
 #' @param level level for prediction regions.
 #' @param lty.ellips line type for prediction ellipses. See graphical parameter lty.
@@ -741,6 +741,15 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
       
       if(fac.center){
         cats <- apply(object$lv.X.design,2,function(x) { all(x %in% 0:1) })
+        if(!is.null(object$lv.X)){
+          for(v in names(object$lv.X)){
+            f <- object$lv.X[[v]]
+            if(is.character(f)) f <- factor(f)
+            if(!is.factor(f)) next
+            C <- contrasts(f)
+            cats[colnames(object$lv.X.design) %in% paste0(v, if(is.null(colnames(C))) seq_len(ncol(C)) else colnames(C))] <- TRUE
+          }
+        }
       }else{
         cats <- rep(FALSE, ncol(object$lv.X.design))
       }
@@ -771,9 +780,28 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
       # add points for categorical variables
       if(any(cats)){
         LVcoef <- object$params$LvXcoef
-        pts<- ((t(t(LVcoef[cats,, drop = FALSE]) / sqrt(colSums(lv^2)) * (bothnorms^alpha)))%*%svd_rotmat_sites)[,which.lvs,drop=FALSE]
-        points(pts[,1], pts[,2], pch = gr_par_list$pch, col=col[cats], cex = cex.env)
-        text(pts[,1]*(1+lab.dist),y=pts[,2]*(1+lab.dist),labels = row.names(pts), col=col[cats], cex = cex.env)
+        catcoef <- LVcoef[cats,, drop = FALSE]
+        names(col) <- colnames(object$lv.X.design)
+        colcat <- col[cats]
+        if(!is.null(object$lv.X)){
+          for(v in names(object$lv.X)){
+            f <- object$lv.X[[v]]
+            if(is.character(f)) f <- factor(f)
+            if(!is.factor(f)) next
+            C <- contrasts(f)
+            cols <- paste0(v, if(is.null(colnames(C))) seq_len(ncol(C)) else colnames(C))
+            if(all(cols %in% row.names(catcoef))){
+              lev <- C %*% catcoef[cols,, drop = FALSE]
+              row.names(lev) <- paste0(v, row.names(C))
+              catcoef <- rbind(catcoef[!row.names(catcoef) %in% cols,, drop = FALSE], lev)
+              colcat <- c(colcat[!names(colcat) %in% cols], structure(ifelse(row.names(lev) %in% cols, col[row.names(lev)], "red"), names = row.names(lev)))
+            }
+          }
+        }
+        colcat <- colcat[row.names(catcoef)]
+        pts<- ((t(t(catcoef) / sqrt(colSums(lv^2)) * (bothnorms^alpha)))%*%svd_rotmat_sites)[,which.lvs,drop=FALSE]
+        points(pts[,1], pts[,2], pch = gr_par_list$pch, col=colcat, cex = cex.env)
+        text(pts[,1]*(1+lab.dist),y=pts[,2]*(1+lab.dist),labels = row.names(pts), col=colcat, cex = cex.env)
       }
       
     }else if(num.lv>0&(num.lv.c+num.RR)>0){warning("Cannot add arrows to plot, when num.lv>0 and with reduced rank constraints.")}
