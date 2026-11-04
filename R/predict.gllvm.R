@@ -275,7 +275,7 @@ predict.gllvm <- function(object, newX = NULL, newTR = NULL, newLV = NULL, type 
             if (!all(colnames(object$lv.var.design) %in% colnames(lv.var.design))) stop("The variables in 'lv.var' are missing from 'newX', or have levels not present in the fitted model.")
             lv.var.design <- lv.var.design[, colnames(object$lv.var.design), drop = FALSE]
           }
-          S[, 1:object$num.lv.c] <- S[, 1:object$num.lv.c, drop = FALSE] * exp(lv.var.design %*% object$params$LvVarcoef)
+          S[, 1:(object$num.lv.c + object$num.lv)] <- S[, 1:(object$num.lv.c + object$num.lv), drop = FALSE] * exp(lv.var.design %*% object$params$LvVarcoef)
         }
         }
         if (object$num.RR == 0) {
@@ -299,7 +299,7 @@ predict.gllvm <- function(object, newX = NULL, newTR = NULL, newLV = NULL, type 
       } else {
         if ((object$num.lv + object$num.lv.c) > 0) {
           S <- matrix(object$params$sigma.lv, nrow(object$lvs), ncol(object$lvs), byrow = TRUE)
-          if (!is.null(object$params$LvVarcoef)) S[, 1:object$num.lv.c] <- S[, 1:object$num.lv.c, drop = FALSE] * exp(object$lv.var.design %*% object$params$LvVarcoef)
+          if (!is.null(object$params$LvVarcoef)) S[, 1:(object$num.lv.c + object$num.lv)] <- S[, 1:(object$num.lv.c + object$num.lv), drop = FALSE] * exp(object$lv.var.design %*% object$params$LvVarcoef)
         }
         if (object$num.RR == 0) {
           lvs <- object$lvs * S

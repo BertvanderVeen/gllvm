@@ -870,7 +870,7 @@ se.gllvm <- function(object, sparse = FALSE, ...){
       out$sd$sigma.lv  <- se.sigma.lv
       names(out$sd$sigma.lv) <- colnames(object$params$theta[,1:(num.lv+num.lv.c)])
       if(!is.null(object$params$LvVarcoef)){
-        out$sd$LvVarcoef <- matrix(se$sigmaLVx, nrow(object$params$LvVarcoef), num.lv.c, dimnames = dimnames(object$params$LvVarcoef))
+        out$sd$LvVarcoef <- matrix(se$sigmaLVx, nrow(object$params$LvVarcoef), num.lv.c+num.lv, dimnames = dimnames(object$params$LvVarcoef))
       }
     }
     

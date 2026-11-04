@@ -67,7 +67,7 @@ getLV.gllvm <- function(object, type = NULL, ...)
     }
       lvs <- object$lvs
       lvs[,1:object$num.lv.c] <- t(t(lvs[,1:object$num.lv.c,drop=F])*object$params$sigma.lv[1:object$num.lv.c])
-      if(!is.null(object$params$LvVarcoef))lvs[,1:object$num.lv.c] <- lvs[,1:object$num.lv.c,drop=F]*exp(object$lv.var.design%*%object$params$LvVarcoef)
+      if(!is.null(object$params$LvVarcoef))lvs[,1:object$num.lv.c] <- lvs[,1:object$num.lv.c,drop=F]*exp(object$lv.var.design%*%object$params$LvVarcoef[,1:object$num.lv.c,drop=F])
       lvs[,1:object$num.lv.c] <- lvs[,1:object$num.lv.c]+object$lv.X.design%*%object$params$LvXcoef[,1:object$num.lv.c,drop=F]
       if(object$num.RR>0){
         lvs <- cbind(lvs[,1:object$num.lv.c,drop=F],object$lv.X.design%*%object$params$LvXcoef[,-c(1:object$num.lv.c),drop=F], lvs[,-c(1:object$num.lv.c),drop=F])
