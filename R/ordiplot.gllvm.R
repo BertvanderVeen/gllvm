@@ -172,7 +172,7 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
     if(num.lv.c>0&type=="residual"){
       # to have similar scaling to unconstrained LVs
       sigma.lv <- object$params$sigma.lv[1:num.lv.c]
-      if(!is.null(object$params$LvVarcoef)) sigma.lv <- sigma.lv*sqrt(colMeans(exp(2*object$lv.var.design%*%object$params$LvVarcoef)))
+      if(!is.null(object$params$LvVarcoef)) sigma.lv <- sigma.lv*sqrt(colMeans(exp(2*object$lv.var.design%*%object$params$LvVarcoef[,1:num.lv.c,drop=FALSE])))
     }else if(num.lv.c>0){
       #here the LVs get scaled with sigma.lv not theta
       sigma.lv <- c(sigma.lv, rep(1,num.lv.c))
@@ -182,7 +182,9 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
     
     # unconstrained LVs always get their species parameters scaled, never LVs
     if(num.lv>0){
-      sigma.lv <- c(sigma.lv, object$params$sigma.lv[(num.lv.c+1):(num.lv.c+num.lv)])
+      sigma.lv.u <- object$params$sigma.lv[(num.lv.c+1):(num.lv.c+num.lv)]
+      if(!is.null(object$params$LvVarcoef)) sigma.lv.u <- sigma.lv.u*sqrt(colMeans(exp(2*object$lv.var.design%*%object$params$LvVarcoef[,(num.lv.c+1):(num.lv.c+num.lv),drop=FALSE])))
+      sigma.lv <- c(sigma.lv, sigma.lv.u)
     }
     # scaling for quadratic coefficients
     if(quadratic!=FALSE){
@@ -416,7 +418,7 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
             #   A<-A*object$params$sigma.lv
             # }else{}            
             for(i in 1:Nlv){
-              if(!is.null(object$params$LvVarcoef)) diag(S)[1:num.lv.c] <- object$params$sigma.lv[1:num.lv.c]*exp(object$lv.var.design[keep_sites[i],,drop=FALSE]%*%object$params$LvVarcoef)
+              if(!is.null(object$params$LvVarcoef)) diag(S)[1:num.lv.c] <- object$params$sigma.lv[1:num.lv.c]*exp(object$lv.var.design[keep_sites[i],,drop=FALSE]%*%object$params$LvVarcoef[,1:num.lv.c,drop=FALSE])
               A[i,,]<-S%*%A[i,,]%*%S
             }  
           }
@@ -546,7 +548,7 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
             diag(S)[1:num.lv.c] <- object$params$sigma.lv[1:num.lv.c]
             
             for(i in 1:Nlv){
-              if(!is.null(object$params$LvVarcoef)) diag(S)[1:num.lv.c] <- object$params$sigma.lv[1:num.lv.c]*exp(object$lv.var.design[keep_sites[i],,drop=FALSE]%*%object$params$LvVarcoef)
+              if(!is.null(object$params$LvVarcoef)) diag(S)[1:num.lv.c] <- object$params$sigma.lv[1:num.lv.c]*exp(object$lv.var.design[keep_sites[i],,drop=FALSE]%*%object$params$LvVarcoef[,1:num.lv.c,drop=FALSE])
               A[i,,]<-S%*%A[i,,]%*%S
             }  
           }
@@ -596,7 +598,7 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
           }
         # col.ellips2=rep("grey",p)
         
-        if(!is.null(object$params$LvVarcoef)) object$params$sigma.lv[1:num.lv.c] <- object$params$sigma.lv[1:num.lv.c]*sqrt(colMeans(exp(2*object$lv.var.design%*%object$params$LvVarcoef)))
+        if(!is.null(object$params$LvVarcoef)) object$params$sigma.lv[1:(num.lv.c+num.lv)] <- object$params$sigma.lv[1:(num.lv.c+num.lv)]*sqrt(colMeans(exp(2*object$lv.var.design%*%object$params$LvVarcoef)))
         covMload<-object$sd$theta%*%( diag(object$params$sigma.lv, length(object$params$sigma.lv)) ); #diag(covMT)=1
         diag(covMload)<-object$sd$sigma.lv
         covMload <- array(apply(covMload^2, 1, diag), dim = c(ncol(object$sd$theta),ncol(object$sd$theta),nrow(object$sd$theta)))

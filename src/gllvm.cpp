@@ -61,7 +61,7 @@ Type objective_function<Type>::operator() ()
   PARAMETER_MATRIX(b_lv); //slopes for RRR and constrained ord, VA means for random slopes
   //Left columns are for constrained ordination, Right for RRR
   PARAMETER_VECTOR(sigmaLV);//SD for LV
-  PARAMETER_MATRIX(sigmaLVx);//log-linear coefficients for the residual SD of concurrent LVs
+  PARAMETER_MATRIX(sigmaLVx);//log-linear coefficients for the residual SD of the LVs (num_lv_c, then num_lv)
   PARAMETER_VECTOR(lambda); // lv loadings
   PARAMETER_MATRIX(lambda2);// quadratic lv loadings
   // PARAMETER_MATRIX(thetaH);// hurdle model lv loadings
@@ -106,7 +106,7 @@ Type objective_function<Type>::operator() ()
   DATA_IVECTOR(cstruc); //correlation structure for row.params 0=indep sigma*I, 1=ar1, 2=exponentially decaying, 3=Compound Symm, 4= Matern
   DATA_STRUCT(proptoMats, gllvmutils::nesteddclist); //list of nested lists of length 2, first is the (inverse) matrix, second is the log determinant
   DATA_IVECTOR(cstruclv); //correlation structure for LVs 0=indep sigma*I, 1=ar1, 2=exponentially decaying, 3=Compound Symm, 4= Matern
-  DATA_MATRIX(x_lvvar); // covariates for the residual SD of concurrent LVs, (n, Kv)
+  DATA_MATRIX(x_lvvar); // covariates for the residual SD of the LVs, (n, Kv)
   DATA_STRUCT(dc, gllvmutils::dclist); //coordinates for sites, used for exponentially decaying cov. struc
   DATA_MATRIX(dc_lv); //coordinates for sites, used for exponentially decaying cov. struc
   DATA_INTEGER(Astruc); //Structure of the variational covariance, 0=diagonal, 1=RR, (2=sparse cholesky not implemented yet)
@@ -459,8 +459,8 @@ Type objective_function<Type>::operator() ()
       matrix<Type> Deltai(nlvr,nlvr);
       for (int i=0; i<n; i++) {
         Deltai = Delta;
-        if((x_lvvar.rows()==n) && (num_lv_c>0)){
-          for (int d=0; d<num_lv_c; d++){
+        if((x_lvvar.rows()==n) && ((num_lv_c+num_lv)>0)){
+          for (int d=0; d<(num_lv_c+num_lv); d++){
             Deltai(d,d) *= exp((x_lvvar.row(i)*sigmaLVx.col(d)).sum());
           }
         }
@@ -486,9 +486,9 @@ Type objective_function<Type>::operator() ()
 
     } else if(num_corlv > 0) {
       u *= Delta;
-      if((x_lvvar.rows()==n) && (num_lv_c>0)){
+      if((x_lvvar.rows()==n) && ((num_lv_c+num_lv)>0)){
         for (int i=0; i<n; i++){
-          for (int d=0; d<num_lv_c; d++){
+          for (int d=0; d<(num_lv_c+num_lv); d++){
             u(i,d) *= exp((x_lvvar.row(i)*sigmaLVx.col(d)).sum());
           }
         }
@@ -2569,12 +2569,12 @@ Type objective_function<Type>::operator() ()
       } else if(num_corlv>0) { //CorLV // Correlated LVs
         int i,j,d;
         int arank = 2;
-        bool haslvvar = (x_lvvar.rows()==n) && (num_lv_c>0);
+        bool haslvvar = (x_lvvar.rows()==n) && ((num_lv_c+num_lv)>0);
         matrix<Type> lvvarF(n,num_corlv);
         lvvarF.fill(1.0);
         if(haslvvar){
           for (i=0; i<n; i++){
-            for (int q=0; q<num_lv_c; q++){
+            for (int q=0; q<(num_lv_c+num_lv); q++){
               lvvarF(i,q) = exp((x_lvvar.row(i)*sigmaLVx.col(q)).sum());
             }
           }
@@ -5450,7 +5450,7 @@ Type objective_function<Type>::operator() ()
       for (int i=0; i<n; i++) {
         for (int d=0; d<nlvr; d++){
           u(i,d) *= Delta(d,d);
-          if((x_lvvar.rows()==n) && (d<num_lv_c)){
+          if((x_lvvar.rows()==n) && (d<(num_lv_c+num_lv))){
             u(i,d) *= exp((x_lvvar.row(i)*sigmaLVx.col(d)).sum());
           }
         }

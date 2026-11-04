@@ -87,7 +87,7 @@ getResidualCov.gllvm = function(object, adjust = 1, x = NULL, ...)
   opts <- list(...)
   if(length(object$family) != ncol(object$y)) object$family = rep(object$family,ncol(object$y)) [1:ncol(object$y)]
   if(!is.null(object$params$LvVarcoef)){
-    object$params$sigma.lv[1:object$num.lv.c] <- object$params$sigma.lv[1:object$num.lv.c]*sqrt(colMeans(exp(2*object$lv.var.design%*%object$params$LvVarcoef)))
+    object$params$sigma.lv[1:(object$num.lv.c+object$num.lv)] <- object$params$sigma.lv[1:(object$num.lv.c+object$num.lv)]*sqrt(colMeans(exp(2*object$lv.var.design%*%object$params$LvVarcoef)))
   }
   if("site.index"%in%names(opts)){
     site.index <- opts$site.index

@@ -697,9 +697,9 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, xr = matrix(0), formula = NULL, 
     }
     sigma.lv.coef <- matrix(0)
     x_lvvar <- matrix(0)
-    if(!is.null(lvvar) && num.lv.c>0){
+    if(!is.null(lvvar) && (num.lv.c+num.lv)>0){
       x_lvvar <- lvvar
-      sigma.lv.coef <- matrix(0, ncol(lvvar), num.lv.c)
+      sigma.lv.coef <- matrix(0, ncol(lvvar), num.lv.c+num.lv)
       if(!is.null(start.params$params$LvVarcoef) && all(dim(start.params$params$LvVarcoef)==dim(sigma.lv.coef))) sigma.lv.coef[] <- start.params$params$LvVarcoef
     }
     if(!is.null(phis)) {
@@ -808,7 +808,7 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, xr = matrix(0), formula = NULL, 
       map.list$b_lv = factor(rep(NA, length(b.lv)))
     }
     if((num.lv+num.lv.c)==0)map.list$sigmaLV = factor(NA)
-    if(is.null(lvvar) || num.lv.c==0)map.list$sigmaLVx = factor(NA)
+    if(is.null(lvvar) || (num.lv.c+num.lv)==0)map.list$sigmaLVx = factor(NA)
     
     randoml=c(0,0,0, 0)
     if(nrow(dr)==n) randoml[1]=1
@@ -2588,9 +2588,9 @@ gllvm.TMB <- function(y, X = NULL, lv.X = NULL, xr = matrix(0), formula = NULL, 
             sigma.lv.names <- paste("LV", 1:num.lv.c, sep="")
           }
           names(out$params$sigma.lv) <- sigma.lv.names
-          if(!is.null(lvvar) && num.lv.c>0){
+          if(!is.null(lvvar) && (num.lv.c+num.lv)>0){
             out$params$LvVarcoef <- sigma.lv.coef
-            dimnames(out$params$LvVarcoef) <- list(colnames(lvvar), sigma.lv.names[1:num.lv.c])
+            dimnames(out$params$LvVarcoef) <- list(colnames(lvvar), sigma.lv.names)
           }
         }
       }

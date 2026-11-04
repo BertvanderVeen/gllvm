@@ -2084,8 +2084,8 @@ sdrandom<-function(obj, Vtheta, incl, ignore.u = FALSE,return.covb = FALSE, type
   sigma.site <- NULL
   if((num.lv+num.lv.c)>0){
     sigma.lv <- abs(obj$par[names(obj$par)=="sigmaLV"])  
-    if(any(names(obj$par)=="sigmaLVx")){
-      sigma.site <- t(t(exp(obj$env$data$x_lvvar%*%matrix(obj$par[names(obj$par)=="sigmaLVx"], ncol(obj$env$data$x_lvvar), num.lv.c)))*sigma.lv[1:num.lv.c])
+    if(any(names(obj$par)=="sigmaLVx") && num.lv.c>0){
+      sigma.site <- t(t(exp(obj$env$data$x_lvvar%*%matrix(obj$par[names(obj$par)=="sigmaLVx"], ncol(obj$env$data$x_lvvar))[,1:num.lv.c,drop=FALSE]))*sigma.lv[1:num.lv.c])
     }
   }
   
@@ -2549,7 +2549,7 @@ CMSEPf <- function(fit, return.covb = FALSE, type = NULL){
     sigma.c <- rep(sigma.lv[1:num.lv.c],each=n_nlvc)
     if(!is.null(fit$params$LvVarcoef)){
       if(n_nlvc!=n) stop("Prediction errors of residual latent variables at the level of 'lvCor' units are not available with 'lv.var', as the residual standard deviations are site-specific.")
-      sigma.c <- c(t(t(exp(fit$lv.var.design%*%fit$params$LvVarcoef))*sigma.lv[1:num.lv.c]))
+      sigma.c <- c(t(t(exp(fit$lv.var.design%*%fit$params$LvVarcoef[,1:num.lv.c,drop=FALSE]))*sigma.lv[1:num.lv.c]))
     }
   }
   

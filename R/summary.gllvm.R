@@ -423,7 +423,7 @@ summary.gllvm <- function(object, by = "all", digits = max(3L, getOption("digits
       zval <- pars/se
       pvalue <- 2 * pnorm(-abs(zval))
       coef.table.lvvar <- cbind(pars, se, zval, pvalue)
-      dimnames(coef.table.lvvar) <- list(paste(rownames(object$params$LvVarcoef),"(CLV",rep(1:ncol(object$params$LvVarcoef),each=nrow(object$params$LvVarcoef)),")",sep=""), c("Estimate", "Std. Error", "z value", "Pr(>|z|)"))
+      dimnames(coef.table.lvvar) <- list(paste(rownames(object$params$LvVarcoef),"(",rep(c(paste("CLV",seq_len(num.lv.c),sep=""),paste("LV",seq_len(num.lv),sep="")),each=nrow(object$params$LvVarcoef)),")",sep=""), c("Estimate", "Std. Error", "z value", "Pr(>|z|)"))
       sumry$'Coef.tableLvVar' <- coef.table.lvvar
     }
   }
