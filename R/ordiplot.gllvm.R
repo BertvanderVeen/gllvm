@@ -29,6 +29,7 @@
 #' @param lwd.ellips line width for prediction ellipses. See graphical parameter lwd.
 #' @param col.ellips colors for prediction ellipses.
 #' @param rotate logical, if \code{TRUE} (default) latent variables are rotated to their principal direction using singular value decomposition
+#' @param lv.var.region logical. If \code{TRUE} (default), regions of the residual distribution of the latent variables are added for models with \code{lv.var}, see Details.
 #' @param type which type of ordination plot to construct. Options are "residual", "conditional", and "marginal". Defaults to "residual" for GLLVMs with unconstrained latent variables and "conditional" otherwise.
 #' @param ...	additional graphical arguments.
 #'
@@ -64,6 +65,8 @@
 #' The "residual" type corresponds to an ordination diagram of only residual patterns. 
 #' See \link{getLV.gllvm} for details.
 #' 
+#' For informed latent variables with a model for their residual standard deviation (\code{lv.var} in \code{\link{gllvm}}), \code{lv.var.region = TRUE} adds \code{level} regions of the residual distribution of the latent variables, \eqn{N(x^\top B, diag(\sigma_k^2 \exp(2 w^\top \delta_k)))}, with the same scaling and rotation as the site scores. Regions are drawn for each level of a factor in \code{lv.var} and at the 10\%, 50\% and 90\% quantiles of a numeric variable, with the other predictors at the means of their columns in the design matrices, so that a variable that is also in \code{lv.formula} moves the centre of its regions. As the site scores are predictions that are shrunk towards their centre, they are usually less dispersed than the regions. The regions are drawn for \code{type = "conditional"} in models with informed latent variables only (\code{num.lv = 0} and \code{num.RR = 0}).
+#' 
 #' 
 #' @note 
 #' - If error is occurred when using \code{ordiplot()}, try full name of the function \code{ordiplot.gllvm()} as functions named 'ordiplot' might be found in other packages as well.
@@ -96,7 +99,7 @@
 #'@export
 #'@export ordiplot.gllvm
 ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, main = NULL, which.lvs = c(1, 2), predict.region = FALSE, level =0.95,
-                           jitter = FALSE, jitter.amount = 0.2, s.colors = 1, s.cex = 1.2, symbols = FALSE, cex.spp = 0.7, spp.colors = "blue", arrow.scale = 0.8, arrow.spp.scale = 0.8, arrow.ci = TRUE, arrow.lty = "solid", fac.center = FALSE, spp.arrows = NULL, spp.arrows.lty = "dashed", cex.env = 0.7, lab.dist = 0.1, lwd.ellips = 0.5, col.ellips = 4, lty.ellips = 1, type = NULL, rotate = TRUE, ...) {
+                           jitter = FALSE, jitter.amount = 0.2, s.colors = 1, s.cex = 1.2, symbols = FALSE, cex.spp = 0.7, spp.colors = "blue", arrow.scale = 0.8, arrow.spp.scale = 0.8, arrow.ci = TRUE, arrow.lty = "solid", fac.center = FALSE, spp.arrows = NULL, spp.arrows.lty = "dashed", cex.env = 0.7, lab.dist = 0.1, lwd.ellips = 0.5, col.ellips = 4, lty.ellips = 1, type = NULL, rotate = TRUE, lv.var.region = TRUE, ...) {
   if (!any(class(object) %in% "gllvm"))
     stop("Class of the object isn't 'gllvm'.")
   if(isFALSE(object$sd) & !isFALSE(predict.region)){
@@ -331,11 +334,53 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
       }
     }
 
+    lvr <- list()
+    lvr.rad <- sqrt(qchisq(level, df = 2))
+    if(lv.var.region && !is.null(object$lv.var.X) && num.lv.c > 0 && num.lv == 0 && num.RR == 0 && type == "conditional"){
+      for(v in names(object$lv.var.X)){
+        xv <- object$lv.var.X[[v]]
+        if(is.numeric(xv) && is.null(dim(xv))){
+          rows <- rep(1, 3)
+          vals <- unname(quantile(xv, c(0.1, 0.5, 0.9)))
+          labs <- paste(v, "=", signif(vals, 2))
+        }else if(is.factor(xv) || is.character(xv) || is.logical(xv)){
+          rows <- match(levels(factor(xv)), as.character(xv))
+          vals <- xv[rows]
+          labs <- paste0(v, levels(factor(xv)))
+        }else{
+          next
+        }
+        nd <- object$lv.var.X[c(rows, seq_len(nrow(object$lv.var.X))), , drop = FALSE]
+        nd[[v]][seq_along(rows)] <- vals
+        attr(nd, "terms") <- attr(object$lv.var.X, "terms")
+        Wn <- model.matrix(object$lv.var, nd)
+        inW <- c(FALSE, attr(attr(object$lv.var.X, "terms"), "factors")[v, ] > 0)[attr(Wn, "assign") + 1] & colnames(Wn) %in% colnames(object$lv.var.design)
+        W <- matrix(colMeans(object$lv.var.design), length(rows), ncol(object$lv.var.design), byrow = TRUE, dimnames = list(NULL, colnames(object$lv.var.design)))
+        W[, colnames(Wn)[inW]] <- Wn[seq_along(rows), inW, drop = FALSE]
+        M <- matrix(colMeans(object$lv.X.design), length(rows), ncol(object$lv.X.design), byrow = TRUE, dimnames = list(NULL, colnames(object$lv.X.design)))
+        if(v %in% names(object$lv.X) && !anyBars(object$lv.formula)){
+          ndX <- object$lv.X[c(rows, seq_len(nrow(object$lv.X))), , drop = FALSE]
+          ndX[[v]][seq_along(rows)] <- vals
+          attr(ndX, "terms") <- attr(object$lv.X, "terms")
+          Xn <- model.matrix(object$lv.formula, ndX)
+          inX <- c(FALSE, attr(attr(object$lv.X, "terms"), "factors")[v, ] > 0)[attr(Xn, "assign") + 1] & colnames(Xn) %in% colnames(M)
+          M[, colnames(Xn)[inX]] <- Xn[seq_along(rows), inX, drop = FALSE]
+        }
+        cen <- (M %*% object$params$LvXcoef[, 1:num.lv.c, drop = FALSE] %*% B)[, which.lvs, drop = FALSE]
+        sds <- t(object$params$sigma.lv[1:num.lv.c] * t(exp(W %*% object$params$LvVarcoef[, 1:num.lv.c, drop = FALSE])))
+        cols <- hcl.colors(length(rows), "Dark 3")
+        for(r in seq_along(rows)){
+          lvr[[length(lvr) + 1]] <- list(cen = cen[r, ], cov = (t(B) %*% diag(sds[r, ]^2, num.lv.c) %*% B)[which.lvs, which.lvs], lab = labs[r], col = cols[r])
+        }
+      }
+    }
+    lvr.box <- do.call(rbind, lapply(lvr, function(e) rbind(e$cen - lvr.rad * sqrt(diag(e$cov)), e$cen + lvr.rad * sqrt(diag(e$cov)))))
+
     if (!biplot) {
       if(is.null(main)&!is.null(type)){
         main <- paste("Ordination (type='", type, "')",sep="")
       }
-      plotfun(choose.lvs[, which.lvs],
+      plotfun(rbind(choose.lvs[, which.lvs], lvr.box),
               xlab = paste("Latent variable", which.lvs[1]), 
               ylab = paste("Latent variable", which.lvs[2]),
               main = main , type = "n", ... )
@@ -497,7 +542,7 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
         main <- paste("Ordination (type='", type, "')",sep="")
       }
       plotfun(
-        rbind(choose.lvs[, which.lvs], choose.lv.coefs[apply(idx,1,all), which.lvs]),
+        rbind(choose.lvs[, which.lvs], choose.lv.coefs[apply(idx,1,all), which.lvs], lvr.box),
         xlab = paste("Latent variable", which.lvs[1]), 
         ylab = paste("Latent variable", which.lvs[2]),
         main = main, type = "n", ... )
@@ -684,6 +729,11 @@ ordiplot.gllvm <- function(object, biplot = FALSE, ind.spp = NULL, alpha = 0.5, 
           }
         }
       }
+    }
+    
+    for(e in lvr){
+      ellipse(e$cen, covM = e$cov, rad = lvr.rad, col = e$col, lwd = 1.5)
+      text(e$cen[1] + lvr.rad * e$cov[1, 2] / sqrt(e$cov[2, 2]), e$cen[2] + lvr.rad * sqrt(e$cov[2, 2]), labels = e$lab, col = e$col, cex = cex.env, pos = 1)
     }
     
     #Only draw arrows when no unconstrained LVs are present currently: diffcult otherwise due to rotation
