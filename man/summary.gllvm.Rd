@@ -41,7 +41,7 @@
 
 \item{Lvcoefs}{option to return species scores in the ordination, defaults to \code{FALSE}. Returns species optima for quadratic model.}
 
-\item{rotate}{defaults to \code{TRUE}. If \code{TRUE} rotates the output of the latent variables to principal direction, so that it coincides with the ordiplot results. If both unconstrained and constrained latent variables are included, predictor slopes are not rotated.}
+\item{rotate}{defaults to \code{TRUE}. If \code{TRUE} rotates the output of the latent variables to principal direction, so that it coincides with the ordiplot results. If both unconstrained and constrained latent variables are included, predictor slopes are only rotated for \code{type = "marginal"}.}
 
 \item{type}{to match "type" in \code{\link{ordiplot.gllvm}}}
 

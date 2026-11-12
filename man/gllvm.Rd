@@ -17,6 +17,7 @@ gllvm(
   lv.formula = NULL,
   lvCor = NULL,
   lv.var = NULL,
+  lv.var.common = FALSE,
   studyDesign = NULL,
   dist = list(matrix(0)),
   distLV = matrix(0),
@@ -82,6 +83,8 @@ gllvm(
 \item{lvCor}{correlation structure for latent variables, defaults to \code{NULL} Correlation structure for latent variables can be defined via formula, eg. \code{~struc(1|groups)}, where option to 'struc' are \code{corAR1} (AR(1) covariance), \code{corExp} (exponentially decaying, see argument '\code{dist}'), \code{corCS} (compound symmetry), and \code{corMatern} (Matern covariance, see argument '\code{dist}'). The grouping variable needs to be included either in \code{studyDesign}. Not yet available in combination with \code{num.RR} or \code{TR}.}
 
 \item{lv.var}{formula with covariates from \code{X}, e.g. \code{~group} or \code{~x}, for a log-linear model of the standard deviations of the latent variables (\code{num.lv.c} and \code{num.lv}, the residual standard deviations in concurrent ordination): the standard deviation of latent variable \eqn{k} at site \eqn{i} is \eqn{\sigma_k \exp(w_i^\top \delta_k)}, with \eqn{w_i} the row of the design matrix without intercept. Categorical variables give group-specific residual standard deviations. Defaults to \code{NULL}, a single residual standard deviation per latent variable. Not available in combination with \code{TR}.}
+
+\item{lv.var.common}{logical. If \code{TRUE}, the coefficients of \code{lv.var} are the same for all latent variables, \eqn{\delta_k = \delta}, so that the standard deviations of all latent variables change by the same factor between sites. Defaults to \code{FALSE}.}
 
 \item{studyDesign}{variables related to eg. sampling/study design, used for defining correlation structure of the latent variables and row effects.}
 

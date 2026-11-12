@@ -35,6 +35,7 @@
   lty.ellips = 1,
   type = NULL,
   rotate = TRUE,
+  lv.var.region = TRUE,
   ...
 )
 }
@@ -97,6 +98,8 @@
 
 \item{rotate}{logical, if \code{TRUE} (default) latent variables are rotated to their principal direction using singular value decomposition}
 
+\item{lv.var.region}{logical. If \code{TRUE} (default), regions of the residual distribution of the latent variables are added for models with \code{lv.var}, see Details.}
+
 \item{...}{additional graphical arguments.}
 }
 \description{
@@ -133,6 +136,8 @@ Marginal corresponds to an ordination plot that excludes residual patterns (i.e.
 so that it is only available with num.lv.c>0 or num.RR>0. A conditional plot requires num.lv.c>0. 
 The "residual" type corresponds to an ordination diagram of only residual patterns. 
 See \link{getLV.gllvm} for details.
+
+For informed latent variables with a model for their residual standard deviation (\code{lv.var} in \code{\link{gllvm}}), \code{lv.var.region = TRUE} adds \code{level} regions of the residual distribution of the latent variables, \eqn{N(x^\top B, diag(\sigma_k^2 \exp(2 w^\top \delta_k)))}, with the same scaling and rotation as the site scores. Regions are drawn for each level of a factor in \code{lv.var} and at the 10\%, 50\% and 90\% quantiles of a numeric variable, with the other predictors at the means of their columns in the design matrices, so that a variable that is also in \code{lv.formula} moves the centre of its regions. As the site scores are predictions that are shrunk towards their centre, they are usually less dispersed than the regions. The regions are drawn for \code{type = "conditional"} in models with informed latent variables only (\code{num.lv = 0} and \code{num.RR = 0}).
 }
 \note{
 - If error is occurred when using \code{ordiplot()}, try full name of the function \code{ordiplot.gllvm()} as functions named 'ordiplot' might be found in other packages as well.
