@@ -798,7 +798,7 @@ perturb.gllvm <- function(object, params, r, type = "response", skeleton = NULL,
     }
     
     if((num.lv + num.lv.c) > 0){
-      newobject$params$sigma.lv <- abs(newpars$sigmaLV)
+      newobject$params$sigma.lv <- exp(newpars$sigmaLV)
       names(newobject$params$sigma.lv) <- names(object$params$sigma.lv)
       if(!is.null(object$params$LvVarcoef)) newobject$params$LvVarcoef[] <- newpars$sigmaLVx
     }

@@ -775,15 +775,15 @@ FAstart <- function(eta, family, y, num.lv = 0, num.lv.c = 0, num.RR = 0, zeta =
         bhindex = 0
         for(famj in unique(family)){
           if(famj!="betaH"){
-            ds.res[,family == famj] <- residuals.gllvm(list(y=y[,family == famj, drop=F],  Ntrials = Ntrials[,pmin(c(1:p)[family == famj],NCOL(Ntrials))], params=list(phi = phis[family == famj], zeta = zeta[pmin(c(1:p)[family ==famj], nrow(zeta)),,drop=FALSE], ZINB.phi = ZINB.phi[family == famj]), zeta.struc = zeta.struc, Power = Power, link = link[family == famj], family = family[family == famj]), mu = mu[,family == famj, drop=F], eta.mat = eta[,family == famj, drop=F], replace = FALSE)$resi
+            ds.res[,family == famj] <- suppressWarnings(residuals.gllvm(list(y=y[,family == famj, drop=F],  Ntrials = Ntrials[,pmin(c(1:p)[family == famj],NCOL(Ntrials))], params=list(phi = phis[family == famj], zeta = zeta[pmin(c(1:p)[family ==famj], nrow(zeta)),,drop=FALSE], ZINB.phi = ZINB.phi[family == famj]), zeta.struc = zeta.struc, Power = Power, link = link[family == famj], family = family[family == famj]), mu = mu[,family == famj, drop=F], eta.mat = eta[,family == famj, drop=F], replace = FALSE))$resi
           }else{
             # if(j>(p-NobetaH/2)){
               bhbin =  (family == famj & (c(1:p)>(p-NobetaH/2)))
-              ds.res[,bhbin] <- residuals.gllvm(list(y=(y[,bhbin, drop=F]>0)*1, Ntrials = matrix(1), params=list(phi = NULL, zeta = NULL, ZINB.phi = NULL), zeta.struc = zeta.struc, Power = Power, link = link[bhbin], family = "binomial"), mu = mu[,bhbin, drop=F], eta.mat = eta[,bhbin, drop=F], replace = FALSE)$resi
+              ds.res[,bhbin] <- suppressWarnings(residuals.gllvm(list(y=(y[,bhbin, drop=F]>0)*1, Ntrials = matrix(1), params=list(phi = NULL, zeta = NULL, ZINB.phi = NULL), zeta.struc = zeta.struc, Power = Power, link = link[bhbin], family = "binomial"), mu = mu[,bhbin, drop=F], eta.mat = eta[,bhbin, drop=F], replace = FALSE))$resi
               # ds.res[,j] <-              residuals.gllvm(list(y=(y[,j, drop=F]>0)*1, p=1, n=n,  Ntrials = matrix(1), params=list(phi = phis[j], zeta = zeta[min(j, nrow(zeta)),,drop=FALSE], ZINB.phi = ZINB.phi[j]), zeta.struc = zeta.struc, Power = Power, link = link, family = "binomial"), mu = mu[,j, drop=F], eta.mat = eta[,j, drop=F], replace = FALSE)$resi
             # } else {
               bhind =  c(1:p)[(family == famj & (c(1:p)<=(p-NobetaH/2)))]
-              ds.res[,bhind] <- residuals.gllvm(list(y=y[,bhind, drop=F], p=NobetaH/2, n=n,  Ntrials = NULL, params=list(phi = phis[bhind], zeta = NULL, ZINB.phi = NULL), zeta.struc = zeta.struc, Power = Power, link = link[bhind], family = family[bhind]), mu = mu[,c(bhind,p-NobetaH/2+bhind), drop=F], eta.mat = eta[,c(bhind,p-NobetaH/2+bhind), drop=F], replace = FALSE)$resi
+              ds.res[,bhind] <- suppressWarnings(residuals.gllvm(list(y=y[,bhind, drop=F], p=NobetaH/2, n=n,  Ntrials = NULL, params=list(phi = phis[bhind], zeta = NULL, ZINB.phi = NULL), zeta.struc = zeta.struc, Power = Power, link = link[bhind], family = family[bhind]), mu = mu[,c(bhind,p-NobetaH/2+bhind), drop=F], eta.mat = eta[,c(bhind,p-NobetaH/2+bhind), drop=F], replace = FALSE))$resi
               # ds.res[,j] <- residuals.gllvm(list(y=y[,j, drop=F], p=1, n=n,  Ntrials = NULL, params=list(phi = phis[c(j)], zeta = zeta[min(j, nrow(zeta)),,drop=FALSE], ZINB.phi = ZINB.phi[j]), zeta.struc = zeta.struc, Power = Power, link = link, family = family[j]), mu = mu[,c(j,p-NobetaH/2+j), drop=F], eta.mat = eta[,c(j,p-NobetaH/2+j), drop=F], replace = FALSE)$resi
             # }
           }
@@ -881,7 +881,7 @@ FAstart <- function(eta, family, y, num.lv = 0, num.lv.c = 0, num.RR = 0, zeta =
     }
     eta <-  eta+(index+lv.X%*%b.lv)%*%t(gamma)
   }else if(num.lv.c>0&num.lv>0){
-    if(all(family!=c("ordinal", "orderedBeta"))){
+    if(!any(family %in% c("ordinal", "orderedBeta"))){
       zeta.struc<-"species"
     }
     if(num.lv.c>1)start.fit <- try(suppressWarnings(gllvm.TMB(y, lv.X = lv.X, num.lv = 0, num.lv.c = num.lv.c, family = family, starting.val = "zero", zeta.struc = zeta.struc, offset = eta, disp.group = disp.group, optimizer = start.optimizer, method = method, Ntrials = Ntrials, optim.method = start.optim.method, link = link)), silent = TRUE)
@@ -933,15 +933,15 @@ FAstart <- function(eta, family, y, num.lv = 0, num.lv.c = 0, num.RR = 0, zeta =
       
       for(famj in unique(family)){
         if(famj!="betaH"){
-          ds.res[,family == famj] <- residuals.gllvm(list(y=y[,family == famj, drop=F],  Ntrials = Ntrials[,pmin(c(1:p)[family == famj],NCOL(Ntrials))], params=list(phi = phis[family == famj], zeta = zeta[pmin(c(1:p)[family ==famj], nrow(zeta)),,drop=FALSE], ZINB.phi = ZINB.phi[family == famj]), zeta.struc = zeta.struc, Power = Power, link = link[family == famj], family = family[family == famj]), mu = mu[,family == famj, drop=F], eta.mat = eta[,family == famj, drop=F], replace = FALSE)$resi
+          ds.res[,family == famj] <- suppressWarnings(residuals.gllvm(list(y=y[,family == famj, drop=F],  Ntrials = Ntrials[,pmin(c(1:p)[family == famj],NCOL(Ntrials))], params=list(phi = phis[family == famj], zeta = zeta[pmin(c(1:p)[family ==famj], nrow(zeta)),,drop=FALSE], ZINB.phi = ZINB.phi[family == famj]), zeta.struc = zeta.struc, Power = Power, link = link[family == famj], family = family[family == famj]), mu = mu[,family == famj, drop=F], eta.mat = eta[,family == famj, drop=F], replace = FALSE))$resi
         }else{
           # if(j>(p-NobetaH/2)){
           bhbin =  (family == famj & (c(1:p)>(p-NobetaH/2)))
-          ds.res[,bhbin] <- residuals.gllvm(list(y=(y[,bhbin, drop=F]>0)*1,  Ntrials = matrix(1), params=list(phi = NULL, zeta = NULL, ZINB.phi = NULL), zeta.struc = zeta.struc, Power = Power, link = link[bhbin], family = "binomial"), mu = mu[,bhbin, drop=F], eta.mat = eta[,bhbin, drop=F], replace = FALSE)$resi
+          ds.res[,bhbin] <- suppressWarnings(residuals.gllvm(list(y=(y[,bhbin, drop=F]>0)*1,  Ntrials = matrix(1), params=list(phi = NULL, zeta = NULL, ZINB.phi = NULL), zeta.struc = zeta.struc, Power = Power, link = link[bhbin], family = "binomial"), mu = mu[,bhbin, drop=F], eta.mat = eta[,bhbin, drop=F], replace = FALSE))$resi
           # ds.res[,j] <-              residuals.gllvm(list(y=(y[,j, drop=F]>0)*1, p=1, n=n,  Ntrials = matrix(1), params=list(phi = phis[j], zeta = zeta[min(j, nrow(zeta)),,drop=FALSE], ZINB.phi = ZINB.phi[j]), zeta.struc = zeta.struc, Power = Power, link = link, family = "binomial"), mu = mu[,j, drop=F], eta.mat = eta[,j, drop=F], replace = FALSE)$resi
           # } else {
           bhind =  c(1:p)[(family == famj & (c(1:p)<=(p-NobetaH/2)))]
-          ds.res[,bhind] <- residuals.gllvm(list(y=y[,bhind, drop=F], p=NobetaH/2, n=n,  Ntrials = NULL, params=list(phi = phis[bhind], zeta = NULL, ZINB.phi = NULL), zeta.struc = zeta.struc, Power = Power, link = link[bhind], family = family[bhind]), mu = mu[,c(bhind,p-NobetaH/2+bhind), drop=F], eta.mat = eta[,c(bhind,p-NobetaH/2+bhind), drop=F], replace = FALSE)$resi
+          ds.res[,bhind] <- suppressWarnings(residuals.gllvm(list(y=y[,bhind, drop=F], p=NobetaH/2, n=n,  Ntrials = NULL, params=list(phi = phis[bhind], zeta = NULL, ZINB.phi = NULL), zeta.struc = zeta.struc, Power = Power, link = link[bhind], family = family[bhind]), mu = mu[,c(bhind,p-NobetaH/2+bhind), drop=F], eta.mat = eta[,c(bhind,p-NobetaH/2+bhind), drop=F], replace = FALSE))$resi
           # ds.res[,j] <- residuals.gllvm(list(y=y[,j, drop=F], p=1, n=n,  Ntrials = NULL, params=list(phi = phis[c(j)], zeta = zeta[min(j, nrow(zeta)),,drop=FALSE], ZINB.phi = ZINB.phi[j]), zeta.struc = zeta.struc, Power = Power, link = link, family = family[j]), mu = mu[,c(j,p-NobetaH/2+j), drop=F], eta.mat = eta[,c(j,p-NobetaH/2+j), drop=F], replace = FALSE)$resi
           # }
         }
@@ -1046,15 +1046,15 @@ FAstart <- function(eta, family, y, num.lv = 0, num.lv.c = 0, num.RR = 0, zeta =
       
       for(famj in unique(family)){
         if(famj!="betaH"){
-          ds.res[,family == famj] <- residuals.gllvm(list(y=y[,family == famj, drop=F],  Ntrials = Ntrials[,pmin(c(1:p)[family == famj],NCOL(Ntrials))], params=list(phi = phis[family == famj], zeta = zeta[pmin(c(1:p)[family ==famj], nrow(zeta)),,drop=FALSE], ZINB.phi = ZINB.phi[family == famj]), zeta.struc = zeta.struc, Power = Power, link = link[family == famj], family = family[family == famj]), mu = mu[,family == famj, drop=F], eta.mat = eta[,family == famj, drop=F], replace = FALSE)$resi
+          ds.res[,family == famj] <- suppressWarnings(residuals.gllvm(list(y=y[,family == famj, drop=F],  Ntrials = Ntrials[,pmin(c(1:p)[family == famj],NCOL(Ntrials))], params=list(phi = phis[family == famj], zeta = zeta[pmin(c(1:p)[family ==famj], nrow(zeta)),,drop=FALSE], ZINB.phi = ZINB.phi[family == famj]), zeta.struc = zeta.struc, Power = Power, link = link[family == famj], family = family[family == famj]), mu = mu[,family == famj, drop=F], eta.mat = eta[,family == famj, drop=F], replace = FALSE))$resi
         }else{
           # if(j>(p-NobetaH/2)){
           bhbin =  (family == famj & (c(1:p)>(p-NobetaH/2)))
-          ds.res[,bhbin] <- residuals.gllvm(list(y=(y[,bhbin, drop=F]>0)*1,  Ntrials = matrix(1), params=list(phi = NULL, zeta = NULL, ZINB.phi = NULL), zeta.struc = zeta.struc, Power = Power, link = link[bhbin], family = "binomial"), mu = mu[,bhbin, drop=F], eta.mat = eta[,bhbin, drop=F], replace = FALSE)$resi
+          ds.res[,bhbin] <- suppressWarnings(residuals.gllvm(list(y=(y[,bhbin, drop=F]>0)*1,  Ntrials = matrix(1), params=list(phi = NULL, zeta = NULL, ZINB.phi = NULL), zeta.struc = zeta.struc, Power = Power, link = link[bhbin], family = "binomial"), mu = mu[,bhbin, drop=F], eta.mat = eta[,bhbin, drop=F], replace = FALSE))$resi
           # ds.res[,j] <-              residuals.gllvm(list(y=(y[,j, drop=F]>0)*1, p=1, n=n,  Ntrials = matrix(1), params=list(phi = phis[j], zeta = zeta[min(j, nrow(zeta)),,drop=FALSE], ZINB.phi = ZINB.phi[j]), zeta.struc = zeta.struc, Power = Power, link = link, family = "binomial"), mu = mu[,j, drop=F], eta.mat = eta[,j, drop=F], replace = FALSE)$resi
           # } else {
           bhind =  c(1:p)[(family == famj & (c(1:p)<=(p-NobetaH/2)))]
-          ds.res[,bhind] <- residuals.gllvm(list(y=y[,bhind, drop=F],  Ntrials = NULL, params=list(phi = phis[bhind], zeta = NULL, ZINB.phi = NULL), zeta.struc = zeta.struc, Power = Power, link = link[bhind], family = family[bhind]), mu = mu[,c(bhind,p-NobetaH/2+bhind), drop=F], eta.mat = eta[,c(bhind,p-NobetaH/2+bhind), drop=F], replace = FALSE)$resi
+          ds.res[,bhind] <- suppressWarnings(residuals.gllvm(list(y=y[,bhind, drop=F],  Ntrials = NULL, params=list(phi = phis[bhind], zeta = NULL, ZINB.phi = NULL), zeta.struc = zeta.struc, Power = Power, link = link[bhind], family = family[bhind]), mu = mu[,c(bhind,p-NobetaH/2+bhind), drop=F], eta.mat = eta[,c(bhind,p-NobetaH/2+bhind), drop=F], replace = FALSE))$resi
           # ds.res[,j] <- residuals.gllvm(list(y=y[,j, drop=F], p=1, n=n,  Ntrials = NULL, params=list(phi = phis[c(j)], zeta = zeta[min(j, nrow(zeta)),,drop=FALSE], ZINB.phi = ZINB.phi[j]), zeta.struc = zeta.struc, Power = Power, link = link, family = family[j]), mu = mu[,c(j,p-NobetaH/2+j), drop=F], eta.mat = eta[,c(j,p-NobetaH/2+j), drop=F], replace = FALSE)$resi
           # }
         }
@@ -1134,15 +1134,15 @@ FAstart <- function(eta, family, y, num.lv = 0, num.lv.c = 0, num.RR = 0, zeta =
 
       for(famj in unique(family)){
         if(famj!="betaH"){
-          ds.res[,family == famj] <- residuals.gllvm(list(y=y[,family == famj, drop=F],  Ntrials = Ntrials[,pmin(c(1:p)[family == famj],NCOL(Ntrials))], params=list(phi = phis[family == famj], zeta = zeta[pmin(c(1:p)[family ==famj], nrow(zeta)),,drop=FALSE], ZINB.phi = ZINB.phi[family == famj]), zeta.struc = zeta.struc, Power = Power, link = link[family == famj], family = family[family == famj]), mu = mu[,family == famj, drop=F], eta.mat = eta[,family == famj, drop=F], replace = FALSE)$resi
+          ds.res[,family == famj] <- suppressWarnings(residuals.gllvm(list(y=y[,family == famj, drop=F],  Ntrials = Ntrials[,pmin(c(1:p)[family == famj],NCOL(Ntrials))], params=list(phi = phis[family == famj], zeta = zeta[pmin(c(1:p)[family ==famj], nrow(zeta)),,drop=FALSE], ZINB.phi = ZINB.phi[family == famj]), zeta.struc = zeta.struc, Power = Power, link = link[family == famj], family = family[family == famj]), mu = mu[,family == famj, drop=F], eta.mat = eta[,family == famj, drop=F], replace = FALSE))$resi
         }else{
           # if(j>(p-NobetaH/2)){
           bhbin =  (family == famj & (c(1:p)>(p-NobetaH/2)))
-          ds.res[,bhbin] <- residuals.gllvm(list(y=(y[,bhbin, drop=F]>0)*1,  Ntrials = matrix(1), params=list(phi = NULL, zeta = NULL, ZINB.phi = NULL), zeta.struc = zeta.struc, Power = Power, link = link[bhbin], family = "binomial"), mu = mu[,bhbin, drop=F], eta.mat = eta[,bhbin, drop=F], replace = FALSE)$resi
+          ds.res[,bhbin] <- suppressWarnings(residuals.gllvm(list(y=(y[,bhbin, drop=F]>0)*1,  Ntrials = matrix(1), params=list(phi = NULL, zeta = NULL, ZINB.phi = NULL), zeta.struc = zeta.struc, Power = Power, link = link[bhbin], family = "binomial"), mu = mu[,bhbin, drop=F], eta.mat = eta[,bhbin, drop=F], replace = FALSE))$resi
           # ds.res[,j] <-              residuals.gllvm(list(y=(y[,j, drop=F]>0)*1, p=1, n=n,  Ntrials = matrix(1), params=list(phi = phis[j], zeta = zeta[min(j, nrow(zeta)),,drop=FALSE], ZINB.phi = ZINB.phi[j]), zeta.struc = zeta.struc, Power = Power, link = link, family = "binomial"), mu = mu[,j, drop=F], eta.mat = eta[,j, drop=F], replace = FALSE)$resi
           # } else {
           bhind =  c(1:p)[(family == famj & (c(1:p)<=(p-NobetaH/2)))]
-          ds.res[,bhind] <- residuals.gllvm(list(y=y[,bhind, drop=F],  Ntrials = NULL, params=list(phi = phis[bhind], zeta = NULL, ZINB.phi = NULL), zeta.struc = zeta.struc, Power = Power, link = link[bhind], family = family[bhind]), mu = mu[,c(bhind,p-NobetaH/2+bhind), drop=F], eta.mat = eta[,c(bhind,p-NobetaH/2+bhind), drop=F], replace = FALSE)$resi
+          ds.res[,bhind] <- suppressWarnings(residuals.gllvm(list(y=y[,bhind, drop=F],  Ntrials = NULL, params=list(phi = phis[bhind], zeta = NULL, ZINB.phi = NULL), zeta.struc = zeta.struc, Power = Power, link = link[bhind], family = family[bhind]), mu = mu[,c(bhind,p-NobetaH/2+bhind), drop=F], eta.mat = eta[,c(bhind,p-NobetaH/2+bhind), drop=F], replace = FALSE))$resi
           # ds.res[,j] <- residuals.gllvm(list(y=y[,j, drop=F], p=1, n=n,  Ntrials = NULL, params=list(phi = phis[c(j)], zeta = zeta[min(j, nrow(zeta)),,drop=FALSE], ZINB.phi = ZINB.phi[j]), zeta.struc = zeta.struc, Power = Power, link = link, family = family[j]), mu = mu[,c(j,p-NobetaH/2+j), drop=F], eta.mat = eta[,c(j,p-NobetaH/2+j), drop=F], replace = FALSE)$resi
           # }
 
@@ -2079,7 +2079,7 @@ sdrandom<-function(obj, Vtheta, incl, ignore.u = FALSE,return.covb = FALSE, type
   
   sigma.site <- NULL
   if((num.lv+num.lv.c)>0){
-    sigma.lv <- abs(obj$par[names(obj$par)=="sigmaLV"])  
+    sigma.lv <- exp(obj$par[names(obj$par)=="sigmaLV"])  
     if(any(names(obj$par)=="sigmaLVx") && num.lv.c>0){
       sigma.site <- t(t(exp(obj$env$data$x_lvvar%*%matrix(obj$par[names(obj$par)=="sigmaLVx"], ncol(obj$env$data$x_lvvar))[,1:num.lv.c,drop=FALSE]))*sigma.lv[1:num.lv.c])
     }

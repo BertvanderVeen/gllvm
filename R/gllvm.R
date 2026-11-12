@@ -14,6 +14,7 @@
 #' @param lv.formula an object of class "formula" (or one that can be coerced to that class): defines the effects that inform the ordination axes in concurrent (\code{num.lv.c}) and/or constrained (\code{num.RR}) ordination. Accepts fixed effects or random effects, not both at the same time. Random effects formulation requires specifying the \code{randomB} argument.
 #' @param lvCor correlation structure for latent variables, defaults to \code{NULL} Correlation structure for latent variables can be defined via formula, eg. \code{~struc(1|groups)}, where option to 'struc' are \code{corAR1} (AR(1) covariance), \code{corExp} (exponentially decaying, see argument '\code{dist}'), \code{corCS} (compound symmetry), and \code{corMatern} (Matern covariance, see argument '\code{dist}'). The grouping variable needs to be included either in \code{studyDesign}. Not yet available in combination with \code{num.RR} or \code{TR}.
 #' @param lv.var formula with covariates from \code{X}, e.g. \code{~group} or \code{~x}, for a log-linear model of the standard deviations of the latent variables (\code{num.lv.c} and \code{num.lv}, the residual standard deviations in concurrent ordination): the standard deviation of latent variable \eqn{k} at site \eqn{i} is \eqn{\sigma_k \exp(w_i^\top \delta_k)}, with \eqn{w_i} the row of the design matrix without intercept. Categorical variables give group-specific residual standard deviations. Defaults to \code{NULL}, a single residual standard deviation per latent variable. Not available in combination with \code{TR}.
+#' @param lv.var.common logical. If \code{TRUE}, the coefficients of \code{lv.var} are the same for all latent variables, \eqn{\delta_k = \delta}, so that the standard deviations of all latent variables change by the same factor between sites. Defaults to \code{FALSE}.
 #' @param studyDesign variables related to eg. sampling/study design, used for defining correlation structure of the latent variables and row effects.
 #' @param method  model can be fitted using Laplace approximation method (\code{method = "LA"}) or variational approximation method (\code{method = "VA"}), or with extended variational approximation method (\code{method = "EVA"}) when VA is not applicable. If particular model has not been implemented using the selected method, model is fitted using the alternative method as a default. Defaults to \code{"VA"}.
 #' @param row.eff  \code{FALSE}, \code{fixed}, \code{"random"} or an object of class "formula": defines the community-level or row effects, i.e. terms that (unlike \code{formula}) are the same for all species (columns) rather than species-specific. Defaults to \code{FALSE} when row effects are not included. \code{"fixed"} and \code{"random"} give, respectively, a single fixed or i.i.d. random intercept per row. Supports both fixed effects and random effects, e.g. \code{~ x1 + (1|group)}. The variable(s) must be included in \code{studyDesign}. Correlation structure between random group effects/intercepts can also be set using \code{~struc(1|groups)}, where option to 'struc' are \code{corAR1} (AR(1) covariance), \code{corExp} (exponentially decaying, see argument '\code{dist}'), \code{corCS} (compound symmetry), and \code{corMatern} (Matern covariance, see argument '\code{dist}'), or \code{propto} (proportional covariance, used as propto(a+b|group, matrix)). Correlation structure can be set between or within groups, see argument '\code{corWithin}'.
@@ -442,7 +443,7 @@
 
 gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, family,
                   num.lv = NULL, num.lv.c = 0, num.RR = 0, lv.formula = NULL,
-                  lvCor = NULL, lv.var = NULL, studyDesign=NULL, dist = list(matrix(0)), distLV = matrix(0), colMat = NULL, colMat.rho.struct = "single", corWithin = FALSE, corWithinLV = FALSE,
+                  lvCor = NULL, lv.var = NULL, lv.var.common = FALSE, studyDesign=NULL, dist = list(matrix(0)), distLV = matrix(0), colMat = NULL, colMat.rho.struct = "single", corWithin = FALSE, corWithinLV = FALSE,
                   quadratic = FALSE, row.eff = FALSE, sd.errors = TRUE, offset = NULL, method = "VA", randomB = FALSE,
                   randomX = NULL, beta0com = FALSE, xbSparse = FALSE, zeta.struc = "species",
                   plot = FALSE, link = "probit", Ntrials = matrix(1),
@@ -471,12 +472,14 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
     stop("RandomB should be one of FALSE, 'single', 'P', 'LV', or 'iid'.")
   }
   lv.var.design <- NULL
+  lv.var.X <- NULL
   if(!is.null(lv.var)){
     if(!inherits(lv.var, "formula"))stop("'lv.var' must be a formula, e.g. ~group or ~x.")
     if(!is.null(TR))stop("'lv.var' cannot be combined with 'TR'.")
     if(is.null(X))stop("'lv.var' requires its variables to be in 'X'.")
     if(!all(all.vars(lv.var)%in%colnames(X)))stop("All variables in 'lv.var' must be columns of 'X'.")
-    lv.var.design <- model.matrix(lv.var, data.frame(X, check.names = FALSE))
+    lv.var.X <- model.frame(lv.var, data.frame(X, check.names = FALSE))
+    lv.var.design <- model.matrix(lv.var, lv.var.X)
     lv.var.design <- lv.var.design[,!apply(lv.var.design, 2, function(x) all(x == 1)),drop=FALSE]
     if(ncol(lv.var.design)==0)stop("'lv.var' must contain at least one variable.")
     if(nrow(lv.var.design)!=nrow(y))stop("Variables in 'lv.var' cannot contain missing values.")
@@ -488,6 +491,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
     num.lv <- 2
   }else if(is.null(num.lv)){num.lv<-0}
   if(!is.null(lv.var) && (num.lv.c+num.lv)==0)stop("'lv.var' requires num.lv > 0 or num.lv.c > 0.")
+  if(lv.var.common && is.null(lv.var))stop("'lv.var.common = TRUE' requires 'lv.var'.")
 
     constrOpt <- FALSE
     restrict <- 30
@@ -1591,7 +1595,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
     n.i <- 1
 
 
-    out <- list( y = y, X = X, lv.X = lv.X, lv.X.design = lv.X.design, TR = TR, data = datayx, num.lv = num.lv, num.lv.c = num.lv.c, num.RR = num.RR, num.lvcor =num.lv.cor, lv.formula = lv.formula, lvCor = lvCor, lv.var = lv.var, lv.var.design = lv.var.design, formula = formula,
+    out <- list( y = y, X = X, lv.X = lv.X, lv.X.design = lv.X.design, TR = TR, data = datayx, num.lv = num.lv, num.lv.c = num.lv.c, num.RR = num.RR, num.lvcor =num.lv.cor, lv.formula = lv.formula, lvCor = lvCor, lv.var = lv.var, lv.var.design = lv.var.design, lv.var.X = lv.var.X, lv.var.common = lv.var.common, formula = formula,
         method = method, family = family, row.eff = row.eff.formula, col.eff = list(col.eff = col.eff, col.eff.formula = col.eff.formula, spdr = Matrix::t(RElistSP$Zt), Ab.struct = Ab.struct, Ab.struct.rank = Ab.struct.rank, colMat.rho.struct = colMat.rho.struct), corP=list(cstruc = cstruc, cstruclv = cstruclv, corWithin = corWithin, corWithinLV = corWithinLV, Astruc=0), dist=dist, distLV = distLV, randomX = randomX, n.init = n.init,
         sd = FALSE, Lambda.struc = Lambda.struc, TMB = TMB, beta0com = beta0com, optim.method=optim.method, disp.group = disp.group, NN=NN, Ntrials = Ntrials, quadratic = quadratic, randomB = randomB, zeta.struc = zeta.struc)
     if(any(out$corP$cstruc=="corMatern")) out$corP$MaternSmoothness = MaternKappa
@@ -1799,7 +1803,7 @@ gllvm <- function(y = NULL, X = NULL, TR = NULL, data = NULL, formula = NULL, fa
             quadratic = quadratic,
             randomB = randomB,
             optim.method=optim.method, 
-            dr=dr, dLV=dLV, lvvar = lv.var.design, cstruc = cstruc, cstruclv = cstruclv, dist =dist, distLV = distLV, corWithinLV = corWithinLV, NN=NN, 
+            dr=dr, dLV=dLV, lvvar = lv.var.design, lvvar.common = lv.var.common, cstruc = cstruc, cstruclv = cstruclv, dist =dist, distLV = distLV, corWithinLV = corWithinLV, NN=NN, 
             scalmax = scalmax, MaternKappa = MaternKappa, rangeP = rangeP,
             setMap=setMap, #Dthreshold=Dthreshold,
             disp.group = disp.group,

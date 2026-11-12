@@ -102,7 +102,7 @@ optima.gllvm <- function(object,sd.errors = TRUE, ...) {
         for (j in 1:p) {
           du1 <- c(du1, 0.5*(object$params$theta[j, (num.lv+2*num.lv.c) + i]*sigm[i])^-1)
           du2 <- c(du2, 0.5*(object$params$theta[j, num.lv.c+i]*sigm[i]^3) / (object$params$theta[j, (num.lv+2*num.lv.c) + i]^2*sigm[i]^4))
-          du3 <- c(du3, object$params$theta[j, num.lv.c+i]*(-0.5/(object$params$theta[j, (num.lv+2*num.lv.c) + i]*sigm[i]^2) + object$params$theta[j, (num.lv+num.lv.c+num.lv.c) + i]*sigm[i]^2/(object$params$theta[j, (num.lv+num.lv.c+num.lv.c) + i]^2*sigm[i]^4))*sign(tail(object$TMBfn$par[names(object$TMBfn$par)=="sigmaLV"],num.lv))[i])
+          du3 <- c(du3, object$params$theta[j, num.lv.c+i]*(-0.5/(object$params$theta[j, (num.lv+2*num.lv.c) + i]*sigm[i]^2) + object$params$theta[j, (num.lv+num.lv.c+num.lv.c) + i]*sigm[i]^2/(object$params$theta[j, (num.lv+num.lv.c+num.lv.c) + i]^2*sigm[i]^4))*sigm[i])
         }
       }
     }
@@ -237,11 +237,11 @@ tolerances.gllvm <- function(object,sd.errors = TRUE, ...) {
     
     if(num.lv>0){
       dsig <- NULL
-      sig <- tail(object$params$sig,num.lv)
+      sig <- tail(object$params$sigma.lv,num.lv)
       for (i in 1:(num.lv)) {
       for (j in 1:p) {
           dt <- c(dt,  -thetasig[j,num.lv.c+i]*0.5*2^-0.5*abs(object$params$theta[j,(num.lv+2*num.lv.c)+i]*sig[i]^2)^-1.5)
-          dsig <- c(dsig, -(sig[i]^2*2^0.5*abs(object$params$theta[j,(num.lv+2*num.lv.c)+i])^0.5)^-1)
+          dsig <- c(dsig, -(sig[i]^2*2^0.5*abs(object$params$theta[j,(num.lv+2*num.lv.c)+i])^0.5)^-1*sig[i])
         }
       }
       

@@ -284,8 +284,7 @@ Type objective_function<Type>::operator() ()
       newlam.row(0).fill(1.0);
       if((num_lv+num_lv_c)>0){
         for (int d=0; d<nlvr; d++){
-          Delta(d,d) = fabs(sigmaLV(d));
-          // Delta(d,d) = fabs(sigmaLV(d));
+          Delta(d,d) = exp(sigmaLV(d));
         }
       }
     }

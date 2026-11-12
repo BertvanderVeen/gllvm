@@ -12,7 +12,7 @@
 #' @param spp.intercepts option to return species intercepts, defaults to \code{FALSE}
 #' @param row.intercepts option to return row intercepts, defaults to \code{FALSE} 
 #' @param Lvcoefs option to return species scores in the ordination, defaults to \code{FALSE}. Returns species optima for quadratic model.
-#' @param rotate defaults to \code{TRUE}. If \code{TRUE} rotates the output of the latent variables to principal direction, so that it coincides with the ordiplot results. If both unconstrained and constrained latent variables are included, predictor slopes are not rotated.
+#' @param rotate defaults to \code{TRUE}. If \code{TRUE} rotates the output of the latent variables to principal direction, so that it coincides with the ordiplot results. If both unconstrained and constrained latent variables are included, predictor slopes are only rotated for \code{type = "marginal"}.
 #' @param type to match "type" in \code{\link{ordiplot.gllvm}}
 #' @param component component to be plotted
 #' @param ...	 not used.
@@ -52,16 +52,17 @@ summary.gllvm <- function(object, by = "all", digits = max(3L, getOption("digits
   
   if(!by%in%c("all","terms","LV"))stop("'by' must be one of 'all', 'terms', or 'LV'.")
   #calculate rotation matrix
+  svd_rotmat_sites <- diag(num.lv.c+num.RR+num.lv)
   if(rotate && (num.lv+num.lv.c+num.RR)>1){
     lv <- getLV(object, type = type)
-    
-    do_svd <- svd(lv)
-    svd_rotmat_sites <- do_svd$v
-    if(num.lv.c>0|(num.RR+num.lv)>0){
-      do_svd$v <- svd(getLV(object))$v
+    if(ncol(lv)==(num.lv.c+num.RR+num.lv)){
+      svd_rotmat_sites <- svd(lv)$v
+    }else if(isTRUE(type=="residual")){
+      idx <- c(seq_len(num.lv.c), num.lv.c+num.RR+seq_len(num.lv))
+      svd_rotmat_sites[idx,idx] <- svd(lv)$v
+    }else{
+      svd_rotmat_sites[1:(num.lv.c+num.RR),1:(num.lv.c+num.RR)] <- svd(lv)$v
     }
-  }else{
-    svd_rotmat_sites <- diag(num.lv.c+num.RR+num.lv)
   }
   if((num.RR+num.lv+num.lv.c)>0 && Lvcoefs){
     if(quadratic==FALSE){
@@ -227,7 +228,7 @@ summary.gllvm <- function(object, by = "all", digits = max(3L, getOption("digits
   
   if(!is.null(object$lv.X) && is.null(object$lv.X.design))object$lv.X.design <- object$lv.X #for backward compatibility
   if (!is.logical(object$sd)&!is.null(object$lv.X.design)&object$randomB==FALSE) {
-    if(!rotate|num.lv>0&(num.lv.c+num.RR)>0){
+    if(!rotate|num.lv>0&(num.lv.c+num.RR)>0&!(isTRUE(type=="marginal")|is.null(type)&num.lv.c==0)){
       pars <- c(object$params$LvXcoef)
       se <- c(object$sd$LvXcoef)
       zval <- pvalue <- rep(NA,length(pars))
@@ -264,7 +265,7 @@ summary.gllvm <- function(object, by = "all", digits = max(3L, getOption("digits
         dimnames(coef.table.constrained) <- list(paste(colnames(object$lv.X.design),"(CLV",rep(1:(object$num.lv.c+object$num.RR),each=ncol(object$lv.X.design)),")",sep=""), c("Estimate", "Std. Error", "X2 value", "Pr(>X2)"))
       }
     }else{
-      LVcoef <- (object$params$LvXcoef%*%svd_rotmat_sites)
+      LVcoef <- (object$params$LvXcoef%*%svd_rotmat_sites[1:(num.lv.c+num.RR),1:(num.lv.c+num.RR)])
       pars <- c(LVcoef)
       covB <- object$Hess$cov.mat.mod
       colnames(covB) <- row.names(covB) <- names(object$TMBfn$par)[object$Hess$incl]
@@ -411,19 +412,26 @@ summary.gllvm <- function(object, by = "all", digits = max(3L, getOption("digits
   if((num.lv+num.lv.c)>0){
     
     #add zeros for num.rr
-    object$params$sigma.lv <- c(object$params$sigma.lv[1:num.lv.c],rep(0,num.RR), if(num.lv>0)object$params$sigma.lv[-c(1:(num.lv.c+num.RR))])
+    object$params$sigma.lv <- c(object$params$sigma.lv[seq_len(num.lv.c)], rep(0,num.RR), object$params$sigma.lv[num.lv.c+seq_len(num.lv)])
     
     if(rotate){
       object$params$sigma.lv <- sqrt(diag(t(svd_rotmat_sites)%*%diag(object$params$sigma.lv^2, ncol = num.lv+num.lv.c+num.RR, nrow = num.lv+num.lv.c+num.RR)%*%svd_rotmat_sites))
     }
     sumry$sigma.lv <- object$params$sigma.lv
     if(!is.null(object$params$LvVarcoef) && !is.logical(object$sd) && !is.null(object$sd$LvVarcoef)){
-      pars <- c(object$params$LvVarcoef)
-      se <- c(object$sd$LvVarcoef)
+      if(isTRUE(object$lv.var.common)){
+        pars <- object$params$LvVarcoef[,1]
+        se <- object$sd$LvVarcoef[,1]
+        rnames.lvvar <- rownames(object$params$LvVarcoef)
+      }else{
+        pars <- c(object$params$LvVarcoef)
+        se <- c(object$sd$LvVarcoef)
+        rnames.lvvar <- paste(rownames(object$params$LvVarcoef),"(",rep(colnames(object$params$LvVarcoef),each=nrow(object$params$LvVarcoef)),")",sep="")
+      }
       zval <- pars/se
       pvalue <- 2 * pnorm(-abs(zval))
       coef.table.lvvar <- cbind(pars, se, zval, pvalue)
-      dimnames(coef.table.lvvar) <- list(paste(rownames(object$params$LvVarcoef),"(",rep(c(paste("CLV",seq_len(num.lv.c),sep=""),paste("LV",seq_len(num.lv),sep="")),each=nrow(object$params$LvVarcoef)),")",sep=""), c("Estimate", "Std. Error", "z value", "Pr(>|z|)"))
+      dimnames(coef.table.lvvar) <- list(rnames.lvvar, c("Estimate", "Std. Error", "z value", "Pr(>|z|)"))
       sumry$'Coef.tableLvVar' <- coef.table.lvvar
     }
   }

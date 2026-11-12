@@ -86,6 +86,10 @@ confint.gllvm <- function(object, parm=NULL, level = 0.95, ...) {
     }
     
     
+    if(isTRUE(object$lv.var.common)){
+      object$params$LvVarcoef <- object$params$LvVarcoef[,1,drop=FALSE]
+      object$sd$LvVarcoef <- object$sd$LvVarcoef[,1,drop=FALSE]
+    }
     parmincl <- parm_all[parm_all %in% names(object$params)]
     
     if(any(object$family %in% c("ZINB")) && "inv.phi" %in% parmincl)parmincl[parmincl=="inv.phi"]<-"ZINB.inv.phi"
@@ -166,7 +170,7 @@ confint.gllvm <- function(object, parm=NULL, level = 0.95, ...) {
       cal<-cal + ncol(object$lv.X.design)*(num.lv.c+num.RR)
     }
     if(!is.null(object$params$LvVarcoef)){
-      rnames[(cal + 1):(cal + length(object$params$LvVarcoef))] <- paste("sigma", rep(colnames(object$params$LvVarcoef), each = nrow(object$params$LvVarcoef)), rownames(object$params$LvVarcoef), sep = ".")
+      rnames[(cal + 1):(cal + length(object$params$LvVarcoef))] <- if(isTRUE(object$lv.var.common)) paste("sigma", rownames(object$params$LvVarcoef), sep = ".") else paste("sigma", rep(colnames(object$params$LvVarcoef), each = nrow(object$params$LvVarcoef)), rownames(object$params$LvVarcoef), sep = ".")
       cal <- cal + length(object$params$LvVarcoef)
     }
     
@@ -327,7 +331,7 @@ confint.gllvm <- function(object, parm=NULL, level = 0.95, ...) {
       
     }
     if("LvVarcoef"%in%parm&!is.null(object$params$LvVarcoef)){
-      names(cilow)[gsub("LvVarcoef.*","LvVarcoef",names(unlist(object$sd[parm])))%in%"LvVarcoef"] <- paste("sigma", rep(colnames(object$params$LvVarcoef), each = nrow(object$params$LvVarcoef)), rownames(object$params$LvVarcoef), sep = ".")
+      names(cilow)[gsub("LvVarcoef.*","LvVarcoef",names(unlist(object$sd[parm])))%in%"LvVarcoef"] <- if(isTRUE(object$lv.var.common)) paste("sigma", rownames(object$params$LvVarcoef), sep = ".") else paste("sigma", rep(colnames(object$params$LvVarcoef), each = nrow(object$params$LvVarcoef)), rownames(object$params$LvVarcoef), sep = ".")
     }
     if("sigma.lv"%in%parm){
       if(num.lv>0&num.lv.c>0){
